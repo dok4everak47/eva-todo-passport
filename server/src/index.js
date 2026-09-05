@@ -482,7 +482,7 @@ const INDEX_HTML = `<!doctype html>
 </style>
 </head>
 <body><div class="wrap">
-  <div class="top"><div class="brand">任务リスト<small>TASK LIST</small></div><div class="internal">喜碧<small>HEBEI</small><i class="slash"></i><i class="slash s2"></i><i class="slash s3"></i></div></div>
+  <div class="top"><div class="brand">任务リスト<small>TASK LIST</small></div><div class="internal">内部<small>INTERNAL</small><i class="slash"></i><i class="slash s2"></i><i class="slash s3"></i></div></div>
   <div class="bar">
     <input id="token" type="password" placeholder="ADMIN TOKEN">
     <button id="saveToken">SAVE TOKEN</button>

@@ -1,0 +1,9 @@
+services:
+  eva-todo-api:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      LISTEN_ADDR: ":8080"
+      ADMIN_TOKEN: "change-me"
+      DEVICE_TOKEN: "change-me-device"
