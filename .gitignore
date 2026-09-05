@@ -31,6 +31,7 @@ server/.env
 server/.env.*
 !server/.env.example
 server/.wrangler/
+server/node_modules/
 server/secrets*.json
 server/.cf-token.local
 main/firmware_private.h
