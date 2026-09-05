@@ -1,0 +1,18 @@
+{
+  "name": "eva-todo-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:full": "node scripts/deploy.mjs",
+    "secrets:init": "node scripts/init-secrets.mjs",
+    "db:migrate:local": "wrangler d1 migrations apply eva_todo_db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply eva_todo_db --remote",
+    "check": "node --check src/index.js"
+  },
+  "devDependencies": {
+    "wrangler": "^4.129.0"
+  }
+}

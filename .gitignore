@@ -1,0 +1,43 @@
+build/
+build_*/
+sdkconfig
+sdkconfig.old
+managed_components/
+dependencies.lock
+.vscode/
+.idea/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.swp
+*.swo
+Thumbs.db
+.DS_Store
+build_test_*.exe
+build_test_*
+*.o
+*.obj
+*.exe
+release/
+*.bin
+
+# Local secrets / deployment state
+.dev.vars
+.env
+.env.*
+!.env.example
+server/.dev.vars
+server/.env
+server/.env.*
+!server/.env.example
+server/.wrangler/
+server/secrets*.json
+server/.cf-token.local
+main/firmware_private.h
+
+# Reference checkouts used during development (download-only, not part of the app)
+_ref_ai-passport/
+_ref_eva-musicplayer/
+
+# Host-generated previews
+docs/preview_*.png

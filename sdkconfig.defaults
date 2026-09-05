@@ -1,0 +1,39 @@
+# --- 目标芯片 ---
+CONFIG_IDF_TARGET="esp32c3"
+# 注:ESP32-C3 无 PSRAM,故不设 CONFIG_SPIRAM。
+
+# --- Flash ---
+# FoloToy AI Passport 的所有硬件批次均使用 8MB Flash。
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+# 烧录时按实际探测容量回写镜像头。
+CONFIG_ESPTOOLPY_HEADER_FLASHSIZE_UPDATE=y
+
+# --- 控制台:USB-Serial-JTAG(C3 原生 USB,GPIO18/19)---
+# 不用 UART0:其默认 TX=GPIO21 与本板背光引脚冲突。
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# --- LVGL ---
+CONFIG_LV_COLOR_DEPTH_16=y
+# 界面文字全部用预渲染位图/自绘点阵;Montserrat 仅保留给 LVGL 默认主题使用
+# 因此不需要内置 Montserrat 字体(省 Flash)。
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
+# 只使用本项目界面,不编 LVGL 自带示例。
+# CONFIG_LV_BUILD_EXAMPLES is not set
+# LVGL 内置 malloc 池大小(KB)。本界面约 50+ 个 lv_obj 色块/图片,
+# 96KB 留有合理余量(参考 EVA 播放器固件的实测值)。
+CONFIG_LV_MEM_SIZE_KILOBYTES=96
+
+# --- 分区表 ---
+# 本应用无大体积内嵌资源,默认 1MB factory 分区足够;这里仍用自定义大分区,
+# 方便以后加音频/图片资源时不必改分区。
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# --- 系统 ---
+CONFIG_FREERTOS_HZ=1000
+
+# --- 网络同步 ---
+CONFIG_ESP_WIFI_STA_DISCONNECTED_PM_ENABLE=n
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
