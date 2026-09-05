@@ -9,8 +9,10 @@
 #include "todo_model.h"
 #include "todo_dotfont.h"
 #include "todo_text_assets.h"
+#include "todo_sync.h"
 #include "lvgl.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -101,6 +103,13 @@ static lv_obj_t *s_prev_txt, *s_next_txt;
 static uint8_t s_prog_buf[PROG_W * PROG_H];
 static lv_image_dsc_t s_prog_dsc;
 static lv_obj_t *s_prog_img;
+static lv_obj_t *s_link_status;
+static lv_obj_t *s_settings_scr;
+static lv_timer_t *s_status_timer;
+static bool s_in_settings;
+static bool s_screen_dimmed;
+static int64_t s_last_input_us;
+#define TODO_DEFAULT_DIM_SECONDS 60
 static uint8_t s_page_buf[PAGE_W * PAGE_H];
 static lv_image_dsc_t s_page_dsc;
 static lv_obj_t *s_page_img;
@@ -244,6 +253,29 @@ static void render_progress(void)
     draw_dot_text(s_prog_img, s_prog_buf, PROG_W, PROG_H, PROG_SCALE, text);
 }
 
+static void render_link_status(void)
+{
+    if (!s_link_status) return;
+    lv_label_set_text(s_link_status,
+                      todo_sync_server_connected() ? "NET OK" :
+                      (todo_sync_wifi_connected() ? "WIFI" : "OFF"));
+    lv_obj_set_style_text_color(s_link_status,
+        lv_color_hex(todo_sync_server_connected() ? C_GREEN : C_YELLOW), 0);
+}
+
+static void status_timer_cb(lv_timer_t *timer)
+{
+    (void)timer;
+    render_link_status();
+    if (!s_screen_dimmed && s_last_input_us > 0 &&
+        esp_timer_get_time() - s_last_input_us >=
+            (int64_t)TODO_DEFAULT_DIM_SECONDS * 1000000LL) {
+        bsp_display_backlight(0);
+        s_screen_dimmed = true;
+        ESP_LOGI(TAG, "display backlight off after inactivity");
+    }
+}
+
 static void render_page_indicator(void)
 {
     char text[16];
@@ -255,7 +287,9 @@ static void render_page_indicator(void)
 static void sync_cursor(void)
 {
     for (int r = 0; r < TODO_PAGE_SIZE; r++) {
-        if (global_of(r) < 0 || r != s_cursor) hide(s_cursor_bar[r]);
+        bool settings_row = s_page == todo_model_page_count(&s_model) - 1 &&
+                            r == visible_count();
+        if ((!settings_row && global_of(r) < 0) || r != s_cursor) hide(s_cursor_bar[r]);
         else show(s_cursor_bar[r]);
     }
 }
@@ -275,6 +309,21 @@ static void sync_row(int row)
 {
     int g = global_of(row);
     if (g < 0) {
+        int last_page = todo_model_page_count(&s_model) - 1;
+        if (s_page == last_page && row == visible_count()) {
+            show(s_frame[row]);
+            hide(s_check[row]);
+            hide(s_urgent[row]);
+            hide(s_en_img[row]);
+            hide(s_zh_img[row]);
+            lv_label_set_text(s_title_lbl[row], "SETTINGS");
+            lv_label_set_text(s_note_lbl[row], "DEVICE CONFIG");
+            lv_obj_set_style_text_color(s_title_lbl[row], lv_color_hex(C_GREEN), 0);
+            lv_obj_set_style_text_color(s_note_lbl[row], lv_color_hex(C_GREEN), 0);
+            show(s_title_lbl[row]);
+            show(s_note_lbl[row]);
+            return;
+        }
         hide(s_frame[row]);
         hide(s_cursor_bar[row]);
         hide(s_check[row]);
@@ -344,7 +393,9 @@ static void apply_page(void)
     int pages = todo_model_page_count(&s_model);
     if (s_page < 0) s_page = 0;
     if (s_page >= pages) s_page = pages - 1;
-    if (s_cursor >= visible_count()) s_cursor = visible_count() - 1;
+    int cursor_limit = visible_count();
+    if (s_page == pages - 1) cursor_limit++;
+    if (s_cursor >= cursor_limit) s_cursor = cursor_limit - 1;
     if (s_cursor < 0) s_cursor = 0;
 
     for (int r = 0; r < TODO_PAGE_SIZE; r++) sync_row(r);
@@ -388,6 +439,8 @@ static void build_status(void)
                             X0 + PANEL_W - 6 - PROG_W,
                             STATUS_Y + (STATUS_H - PROG_H) / 2,
                             C_YELLOW);
+    s_link_status = make_label(s_scr, 166, STATUS_Y + 34, 62, &lv_font_montserrat_14);
+    render_link_status();
 }
 
 static void build_rows(void)
@@ -450,6 +503,7 @@ static void build_nav(void)
 static void cursor_move(int dir)
 {
     int vis = visible_count();
+    if (s_page == todo_model_page_count(&s_model) - 1) vis++;
     int next = s_cursor + dir;
     if (next < 0) next = 0;
     if (next >= vis) next = vis - 1;
@@ -472,6 +526,30 @@ static void flip_page(int dir)
 static void toggle_current(void)
 {
     int g = global_of(s_cursor);
+    if (g < 0 && s_page == todo_model_page_count(&s_model) - 1 &&
+        s_cursor == visible_count()) {
+        s_in_settings = true;
+        if (!s_settings_scr) {
+            s_settings_scr = lv_obj_create(NULL);
+            lv_obj_set_style_bg_color(s_settings_scr, lv_color_hex(C_BG), 0);
+            lv_obj_set_style_pad_all(s_settings_scr, 10, 0);
+            lv_obj_t *title = lv_label_create(s_settings_scr);
+            lv_label_set_text(title, "DEVICE SETTINGS");
+            lv_obj_set_style_text_color(title, lv_color_hex(C_GREEN), 0);
+            lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+            lv_obj_set_pos(title, 10, 10);
+            lv_obj_t *info = lv_label_create(s_settings_scr);
+            lv_label_set_text_fmt(info, "WIFI: %s\\nIP: %s\\nCLOUD: %s\\n\\nLONG OK: BACK",
+                                  todo_sync_wifi_connected() ? "CONNECTED" : "OFFLINE",
+                                  todo_sync_ip_address(),
+                                  todo_sync_server_connected() ? "CONNECTED" : "OFFLINE");
+            lv_obj_set_style_text_color(info, lv_color_hex(C_YELLOW), 0);
+            lv_obj_set_style_text_font(info, &lv_font_montserrat_14, 0);
+            lv_obj_set_pos(info, 10, 58);
+        }
+        lv_screen_load(s_settings_scr);
+        return;
+    }
     if (g < 0) return;
     const todo_item_t *item = todo_model_item(&s_model, g);
     todo_state_t state = todo_model_toggle(&s_model, g);
@@ -492,6 +570,8 @@ void todo_app_start(void)
     s_page = 0;
     s_cursor = 0;
     s_server_version = 0;
+    s_last_input_us = esp_timer_get_time();
+    s_screen_dimmed = false;
 
     s_scr = lv_obj_create(NULL);
     lv_obj_remove_flag(s_scr, LV_OBJ_FLAG_SCROLLABLE);
@@ -508,6 +588,7 @@ void todo_app_start(void)
     apply_page();
     render_progress();
     lv_screen_load(s_scr);
+    s_status_timer = lv_timer_create(status_timer_cb, 1000, NULL);
     ESP_LOGI(TAG, "todo screen ready: %d tasks, %d pages",
              todo_model_total(&s_model), todo_model_page_count(&s_model));
 }
@@ -515,6 +596,19 @@ void todo_app_start(void)
 void todo_app_handle_button(bsp_btn_t btn, bsp_btn_ev_t ev)
 {
     if (!s_scr) return;
+    s_last_input_us = esp_timer_get_time();
+    if (s_screen_dimmed) {
+        bsp_display_backlight(100);
+        s_screen_dimmed = false;
+        return;
+    }
+    if (s_in_settings) {
+        if (btn == BSP_BTN_OK && ev == BSP_BTN_LONG) {
+            s_in_settings = false;
+            lv_screen_load(s_scr);
+        }
+        return;
+    }
     switch (btn) {
     case BSP_BTN_UP:
         if (ev == BSP_BTN_PRESS) cursor_move(-1);

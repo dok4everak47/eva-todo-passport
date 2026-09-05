@@ -6,5 +6,5 @@ idf_component_register(
          "todo_dotfont.c"
          "todo_text_assets.c"
     INCLUDE_DIRS "."
-    REQUIRES bsp esp_wifi esp_event esp_http_client esp-tls nvs_flash json
+    REQUIRES bsp esp_wifi esp_event esp_http_client esp-tls nvs_flash json esp_timer
 )

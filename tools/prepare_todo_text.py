@@ -170,13 +170,13 @@ def build_assets():
 
 
 def render_internal():
-    """74x42 ARGB:两行双语(喜碧 / HEBEI) + 三条红色斜线于最右。"""
+    """74x42 ARGB:两行双语(内部 / INTERNAL) + 三条红色斜线于最右。"""
     img = Image.new("RGBA", (74, 42), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    zh = fitted_font("喜碧", 50, 22, 16, zh=True)
-    en = fitted_font("HEBEI", 50, 11)
-    draw.text((2, 0), "喜碧", font=zh, fill=YELLOW)
-    draw.text((2, 27), "HEBEI", font=en, fill=YELLOW)
+    zh = fitted_font("内部", 50, 22, 16, zh=True)
+    en = fitted_font("INTERNAL", 50, 11)
+    draw.text((2, 0), "内部", font=zh, fill=YELLOW)
+    draw.text((2, 27), "INTERNAL", font=en, fill=YELLOW)
     for y in (1, 15, 29):
         draw.polygon([(58, y), (73, y), (66, min(y + 11, 41)), (51, min(y + 11, 41))], fill=RED)
     return img

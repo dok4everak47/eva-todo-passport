@@ -55,6 +55,8 @@ static uint32_t s_mutation_seq;
 static int s_server_version;
 static int s_sync_count;
 static bool s_started;
+static bool s_server_connected;
+static char s_ip_address[16] = "0.0.0.0";
 
 static void queue_mutation(const char *id, todo_state_t state, void *user);
 static void sync_task(void *arg);
@@ -78,8 +80,10 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t event_id, void 
         esp_wifi_connect();
         ESP_LOGW(TAG, "wifi disconnected, reconnecting");
     } else if (base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        const ip_event_got_ip_t *event = (const ip_event_got_ip_t *)event_data;
+        snprintf(s_ip_address, sizeof(s_ip_address), IPSTR, IP2STR(&event->ip_info.ip));
         xEventGroupSetBits(s_wifi_events, WIFI_CONNECTED_BIT);
-        ESP_LOGI(TAG, "wifi connected");
+        ESP_LOGI(TAG, "wifi connected, ip=%s", s_ip_address);
     }
 }
 
@@ -157,12 +161,23 @@ static bool request_json(esp_http_client_method_t method, const char *path,
     resp->status = esp_http_client_get_status_code(client);
     esp_http_client_cleanup(client);
     if (err != ESP_OK || resp->status < 200 || resp->status >= 300) {
+        s_server_connected = false;
         ESP_LOGW(TAG, "HTTP %d %s failed: err=%s status=%d body=%s",
                  (int)method, path, esp_err_to_name(err), resp->status, resp->data);
         return false;
     }
+    s_server_connected = true;
     return true;
 }
+
+bool todo_sync_wifi_connected(void)
+{
+    return s_wifi_events &&
+           (xEventGroupGetBits(s_wifi_events) & WIFI_CONNECTED_BIT) != 0;
+}
+
+bool todo_sync_server_connected(void) { return s_server_connected; }
+const char *todo_sync_ip_address(void) { return s_ip_address; }
 
 static bool post_json(const char *path, const char *body, http_response_t *resp)
 {
