@@ -1,4 +1,4 @@
-# EVA Todo Go Server
+# Todo Go Server
 
 This is the self-hosted HTTP deployment of the same `/api/v1` contract used by the Cloudflare Worker. It is dependency-free and stores tasks/reports in the mounted `./data` volume. Set two different tokens: `ADMIN_TOKEN` for the Web UI/AI full access and `DEVICE_TOKEN` for badge sync/report access.
 

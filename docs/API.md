@@ -219,6 +219,12 @@ and safe request examples. It never includes the actual secret values.
 
 ## Deployment
 
+The API has two interchangeable deployment options. Both expose the same
+`/api/v1` contract, web UI, and `/skill.md` download endpoint. Configure a
+device with the base URL and `DEVICE_TOKEN` belonging to the backend it uses.
+
+### Option 1: Cloudflare Worker + D1
+
 Cloudflare resources:
 
 - Worker name: eva-todo-api
@@ -228,7 +234,7 @@ Cloudflare resources:
 
 For the Go server, set the same names as container environment variables. Mount `/data` (the supplied Compose file does this) so a container restart does not lose tasks or reports. Do not use the example token values in a public deployment.
 
-Recommended deploy flow:
+Deploy flow:
 
 ~~~powershell
 cd server
@@ -239,6 +245,29 @@ npm run deploy:full
 ~~~
 
 deploy:full creates or reuses the D1 database, applies migrations remotely, uploads Worker secrets from server/.dev.vars, deploys the Worker, and updates main/firmware_private.h with the deployed /api/v1 URL when possible.
+
+### Option 2: Docker self-hosted Go server
+
+The compatible Go implementation is in `server-go/`. It stores its JSON data in
+the mounted `server-go/data` directory and does not require a Cloudflare account.
+Set separate values for `ADMIN_TOKEN` and `DEVICE_TOKEN` in a local `.env` file:
+
+~~~powershell
+cd server-go
+Copy-Item .env.example .env
+# Edit .env and replace both example token values.
+docker compose up -d --build
+~~~
+
+The default endpoints are:
+
+- API: `http://localhost:8080/api/v1`
+- Web UI: `http://localhost:8080/`
+- Skill: `http://localhost:8080/skill.md`
+
+For public access, put the container behind an HTTPS reverse proxy and restrict
+the Web UI and admin endpoints to trusted users. Do not commit `.env` or reuse
+example token values in production.
 
 ## AI Skill
 
