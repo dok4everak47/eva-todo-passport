@@ -5,7 +5,7 @@ Cloudflare Worker service for the ESP32 badge, Web UI, and AI agents.
 Base URL after deployment:
 
 ~~~text
-https://eva-todo-api.<your-subdomain>.workers.dev/api/v1
+<worker-or-custom-domain>/api/v1
 ~~~
 
 The self-hosted Go server uses the same paths, JSON shapes, and two-token model:
@@ -204,10 +204,10 @@ Requires ADMIN_TOKEN.
 
 ## Web UI
 
-Open the Worker root URL after deployment:
+Open the Worker root URL shown by `wrangler deploy` after deployment:
 
 ~~~text
-https://eva-todo-api.<your-subdomain>.workers.dev/
+<worker-or-custom-domain>/
 ~~~
 
 Enter ADMIN_TOKEN in the password field. The token is stored in browser localStorage for convenience. The ESP32 configuration page stores only DEVICE_TOKEN; it never needs ADMIN_TOKEN.
@@ -251,7 +251,7 @@ skills/eva-todo-control/
 Expected environment:
 
 ~~~powershell
-$env:EVA_TODO_BASE_URL = "https://eva-todo-api.<your-subdomain>.workers.dev/api/v1"
+$env:EVA_TODO_BASE_URL = "https://<worker-or-custom-domain>/api/v1"
 $env:EVA_TODO_ADMIN_TOKEN = "<ADMIN_TOKEN>"
 ~~~
 

@@ -33,6 +33,13 @@ http://your-self-hosted-server:8080/api/v1
 Do not assume a particular hostname; the same Skill works with custom domains,
 Cloudflare Workers, and Docker deployments.
 
+For a Worker deployment, `npm run secrets:init` generates random Admin and
+Device tokens into the ignored local `server/.dev.vars`; `npm run deploy:full`
+uploads them as Worker secrets. The deployment output or the operator's custom
+domain supplies the matching API URL. For Docker, the operator supplies the
+same two values in the ignored `.env` file. Never invent a URL or token and
+never use the public Skill URL as an API credential.
+
 Keep both tokens in environment variables or a local secret store. Never print
 tokens, commit tokens, or ask a user to paste a token into a public prompt.
 
