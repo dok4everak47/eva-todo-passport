@@ -299,20 +299,21 @@ static void render_settings_page(void)
     snprintf(s_settings_path, sizeof(s_settings_path), "%s", path ? path : "/");
 
     if (s_settings_page == 0) {
-        lv_label_set_text_fmt(s_settings_info[0], "WIFI    %s", wifi ? "CONNECTED" : "OFFLINE");
-        lv_label_set_text_fmt(s_settings_info[1], "IP      %s", ip);
-        lv_label_set_text_fmt(s_settings_info[2], "CLOUD   %s", cloud ? "CF OK" : "OFFLINE");
-        lv_label_set_text(s_settings_info[3], "WEB     HTTP :80");
+        // Keep values deliberately short: every line must fit the 240px panel.
+        lv_label_set_text_fmt(s_settings_info[0], "WIFI  %s", wifi ? "OK" : "--");
+        lv_label_set_text_fmt(s_settings_info[1], "IP    %s", ip);
+        lv_label_set_text_fmt(s_settings_info[2], "CF    %s", cloud ? "OK" : "--");
+        lv_label_set_text_fmt(s_settings_info[3], "WEB   %s:80", ip);
     } else if (s_settings_page == 1) {
-        lv_label_set_text(s_settings_info[0], "SERVER  CONFIGURED");
-        lv_label_set_text_fmt(s_settings_info[1], "HOST    %s", s_settings_host);
-        lv_label_set_text_fmt(s_settings_info[2], "PATH    %s", s_settings_path);
-        lv_label_set_text_fmt(s_settings_info[3], "PORT    %u", (unsigned)todo_sync_api_port());
+        lv_label_set_text_fmt(s_settings_info[0], "HOST  %s", s_settings_host);
+        lv_label_set_text_fmt(s_settings_info[1], "PATH  %s", s_settings_path);
+        lv_label_set_text_fmt(s_settings_info[2], "PORT  %u", (unsigned)todo_sync_api_port());
+        lv_label_set_text_fmt(s_settings_info[3], "MODE  %s", todo_sync_dhcp_enabled() ? "DHCP" : "STATIC");
     } else {
-        lv_label_set_text_fmt(s_settings_info[0], "AP      %s", ap ? todo_sync_ap_ip_address() : "STANDBY");
-        lv_label_set_text(s_settings_info[1], "PAIR    EVA-PASSPORT");
-        lv_label_set_text(s_settings_info[2], "WEB     HTTP :80");
-        lv_label_set_text(s_settings_info[3], "CFG     WIFI + CLOUD");
+        lv_label_set_text_fmt(s_settings_info[0], "PAIR  %s", ap ? "READY" : "STANDBY");
+        lv_label_set_text_fmt(s_settings_info[1], "SSID  %s", ap ? todo_sync_ap_ssid() : "EVA-PASSPORT");
+        lv_label_set_text_fmt(s_settings_info[2], "AP IP %s", ap ? todo_sync_ap_ip_address() : "192.168.192.1");
+        lv_label_set_text(s_settings_info[3], "WEB   HTTP :80");
     }
 
     for (int i = 0; i < 4; i++) {
@@ -607,32 +608,42 @@ static void toggle_current(void)
         s_in_settings = true;
         if (!s_settings_scr) {
             s_settings_scr = lv_obj_create(NULL);
+            lv_obj_remove_flag(s_settings_scr, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_set_size(s_settings_scr, 240, 320);
             lv_obj_set_style_bg_color(s_settings_scr, lv_color_hex(C_BG), 0);
-            lv_obj_set_style_pad_all(s_settings_scr, 10, 0);
+            lv_obj_set_style_bg_opa(s_settings_scr, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(s_settings_scr, 0, 0);
+            lv_obj_set_style_pad_all(s_settings_scr, 0, 0);
             lv_obj_t *title = lv_label_create(s_settings_scr);
             lv_label_set_text(title, "SETTINGS");
             lv_obj_set_style_text_color(title, lv_color_hex(C_GREEN), 0);
             lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
-            lv_obj_set_pos(title, 10, 10);
+            lv_obj_set_pos(title, 12, 8);
             for (int i = 0; i < 4; i++) {
                 s_settings_info[i] = lv_label_create(s_settings_scr);
                 lv_obj_set_style_text_color(s_settings_info[i], lv_color_hex(C_YELLOW), 0);
                 lv_obj_set_style_text_font(s_settings_info[i], &lv_font_montserrat_14, 0);
-                lv_obj_set_width(s_settings_info[i], 210);
+                lv_obj_set_width(s_settings_info[i], 220);
+                lv_obj_set_height(s_settings_info[i], 22);
                 lv_label_set_long_mode(s_settings_info[i], LV_LABEL_LONG_CLIP);
-                lv_obj_set_pos(s_settings_info[i], 18, 54 + i * 30);
+                lv_obj_set_pos(s_settings_info[i], 12, 56 + i * 32);
             }
             s_settings_page_label = lv_label_create(s_settings_scr);
             lv_obj_set_style_text_color(s_settings_page_label, lv_color_hex(C_GREEN), 0);
             lv_obj_set_style_text_font(s_settings_page_label, &lv_font_montserrat_14, 0);
-            lv_obj_set_width(s_settings_page_label, 42);
+            lv_obj_set_width(s_settings_page_label, 54);
             lv_label_set_long_mode(s_settings_page_label, LV_LABEL_LONG_CLIP);
-            lv_obj_set_pos(s_settings_page_label, 186, 14);
+            lv_obj_set_pos(s_settings_page_label, 176, 14);
             lv_obj_t *hint = lv_label_create(s_settings_scr);
-            lv_label_set_text(hint, "UP / DOWN PAGE   HOLD OK");
+            lv_label_set_text(hint, "UP/DOWN  PAGE");
             lv_obj_set_style_text_color(hint, lv_color_hex(C_GREEN), 0);
             lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
-            lv_obj_set_pos(hint, 12, 242);
+            lv_obj_set_pos(hint, 12, 256);
+            lv_obj_t *back_hint = lv_label_create(s_settings_scr);
+            lv_label_set_text(back_hint, "HOLD OK  BACK");
+            lv_obj_set_style_text_color(back_hint, lv_color_hex(C_GREEN), 0);
+            lv_obj_set_style_text_font(back_hint, &lv_font_montserrat_14, 0);
+            lv_obj_set_pos(back_hint, 12, 280);
         }
         s_settings_page = 0;
         status_timer_cb(NULL);

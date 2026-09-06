@@ -65,6 +65,7 @@ static bool s_started;
 static bool s_server_connected;
 static char s_ip_address[16] = "0.0.0.0";
 static char s_ap_ip_address[16] = AP_IP_ADDRESS;
+static char s_ap_ssid[33] = "EVA-PASSPORT";
 static bool s_provisioning;
 static httpd_handle_t s_httpd;
 static esp_netif_t *s_sta_netif;
@@ -116,7 +117,7 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t event_id, void 
     (void)arg;
     (void)event_data;
     if (base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
+        if (!s_provisioning) esp_wifi_connect();
     } else if (base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         xEventGroupClearBits(s_wifi_events, WIFI_CONNECTED_BIT);
         snprintf(s_ip_address, sizeof(s_ip_address), "0.0.0.0");
@@ -326,6 +327,7 @@ static void start_provisioning(void)
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
     wifi_config_t ap = { 0 };
     snprintf((char *)ap.ap.ssid, sizeof(ap.ap.ssid), "EVA-PASSPORT-%02X%02X", mac[4], mac[5]);
+    snprintf(s_ap_ssid, sizeof(s_ap_ssid), "%s", (char *)ap.ap.ssid);
     ap.ap.ssid_len = strlen((char *)ap.ap.ssid);
     ap.ap.channel = 1;
     ap.ap.max_connection = 4;
@@ -337,9 +339,9 @@ static void start_provisioning(void)
     (void)esp_netif_dhcps_stop(s_ap_netif);
     (void)esp_netif_set_ip_info(s_ap_netif, &info);
     (void)esp_netif_dhcps_start(s_ap_netif);
+    s_provisioning = true;
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap));
-    s_provisioning = true;
     ESP_LOGW(TAG, "provisioning AP: %s, open network, browse http://%s/",
              ap.ap.ssid, s_ap_ip_address);
     start_config_server();
@@ -392,8 +394,10 @@ bool todo_sync_server_connected(void) { return s_server_connected; }
 const char *todo_sync_ip_address(void) { return s_ip_address; }
 bool todo_sync_provisioning(void) { return s_provisioning; }
 const char *todo_sync_ap_ip_address(void) { return s_ap_ip_address; }
+const char *todo_sync_ap_ssid(void) { return s_ap_ssid; }
 const char *todo_sync_api_base_url(void) { return s_config.api_base_url; }
 uint16_t todo_sync_api_port(void) { return s_config.api_port; }
+bool todo_sync_dhcp_enabled(void) { return s_config.dhcp; }
 
 static bool post_json(const char *path, const char *body, http_response_t *resp)
 {
@@ -647,6 +651,9 @@ void todo_sync_start(void)
         ESP_LOGE(TAG, "wifi init failed: %s", esp_err_to_name(err));
         return;
     }
+    // No usable credentials means there is no reason to wait for a STA timeout.
+    // Start the local setup network immediately so first boot is discoverable.
+    if (!configured()) start_provisioning();
     if (xTaskCreate(sync_task, "todo_sync", 8192, NULL, 3, NULL) != pdPASS) {
         ESP_LOGE(TAG, "sync task create failed");
     }
