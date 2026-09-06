@@ -5,6 +5,10 @@
 // defaults below keep the project buildable without secrets.
 #pragma once
 
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
 #if __has_include("firmware_private.h")
 #include "firmware_private.h"
 #endif
@@ -36,3 +40,24 @@
 #ifndef TODO_REPORT_EVERY_N_SYNCS
 #define TODO_REPORT_EVERY_N_SYNCS 4
 #endif
+
+#define TODO_CFG_SSID_LEN 33
+#define TODO_CFG_PASSWORD_LEN 65
+#define TODO_CFG_URL_LEN 160
+#define TODO_CFG_TOKEN_LEN 128
+#define TODO_CFG_IP_LEN 16
+
+typedef struct {
+    char wifi_ssid[TODO_CFG_SSID_LEN];
+    char wifi_password[TODO_CFG_PASSWORD_LEN];
+    char api_base_url[TODO_CFG_URL_LEN];
+    char api_token[TODO_CFG_TOKEN_LEN];
+    bool dhcp;
+    char static_ip[TODO_CFG_IP_LEN];
+    char gateway[TODO_CFG_IP_LEN];
+    char netmask[TODO_CFG_IP_LEN];
+    uint16_t api_port;
+} todo_runtime_config_t;
+
+void todo_config_load(todo_runtime_config_t *config);
+bool todo_config_save(const todo_runtime_config_t *config);

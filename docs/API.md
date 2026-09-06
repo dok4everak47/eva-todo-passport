@@ -8,6 +8,12 @@ Base URL after deployment:
 https://eva-todo-api.<your-subdomain>.workers.dev/api/v1
 ~~~
 
+The self-hosted Go server uses the same paths, JSON shapes, and two-token model:
+
+~~~text
+http://<host>:8080/api/v1
+~~~
+
 Authentication:
 
 ~~~http
@@ -62,7 +68,7 @@ Returns service name, API version, server time, and global task version. No auth
 GET /api/v1/tasks?status=todo&q=server&tag=ops&sinceVersion=0&includeDeleted=0
 ~~~
 
-Optional filters: status, q, tag, sinceVersion, includeDeleted=1.
+Optional filters: status, q, sinceVersion, includeDeleted=1. `q` searches title, notes, and tags.
 
 Requires ADMIN_TOKEN or DEVICE_TOKEN.
 
@@ -85,6 +91,14 @@ Content-Type: application/json
 ~~~
 
 Requires ADMIN_TOKEN.
+
+### Get One Task
+
+~~~http
+GET /api/v1/tasks/{id}
+~~~
+
+Requires ADMIN_TOKEN or DEVICE_TOKEN.
 
 ### Patch Task
 
@@ -196,7 +210,7 @@ Open the Worker root URL after deployment:
 https://eva-todo-api.<your-subdomain>.workers.dev/
 ~~~
 
-Enter ADMIN_TOKEN in the password field. The token is stored in browser localStorage for convenience.
+Enter ADMIN_TOKEN in the password field. The token is stored in browser localStorage for convenience. The ESP32 configuration page stores only DEVICE_TOKEN; it never needs ADMIN_TOKEN.
 
 ## Deployment
 
@@ -206,6 +220,8 @@ Cloudflare resources:
 - D1 database name: eva_todo_db
 - Binding name: DB
 - Required Worker Secrets: ADMIN_TOKEN, DEVICE_TOKEN
+
+For the Go server, set the same names as container environment variables. Mount `/data` (the supplied Compose file does this) so a container restart does not lose tasks or reports. Do not use the example token values in a public deployment.
 
 Recommended deploy flow:
 

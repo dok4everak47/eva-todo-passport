@@ -17,6 +17,8 @@ Todo List 固件 + Cloudflare Worker/D1 服务端。开机先进入本地任务�
   - 已完成 → 绿色实心方框 + 绿字
   - 未完成 → 黄色空心方框 + 黄字
   - 紧急   → 红色警示图标 + 红框红字
+- 服务器动态任务使用 12 px 1 bpp 常用中文字体，覆盖约 7,400 个 GB2312 字符和
+  ASCII；从 Web/API 写入的常用中文可直接显示。
 - 底部导航:上页/PREV、PAGE 1/2、下页/NEXT 直角黄框,页码用点阵数字。
 - 底部荧光绿横条收尾。
 - Cloudflare Worker API 支持增删改查、完成/重开、软删除、长轮询事件、设备状态上报。
@@ -42,6 +44,14 @@ Todo List 固件 + Cloudflare Worker/D1 服务端。开机先进入本地任务�
 - 本地优先:OK 勾选任务会立刻刷新屏幕,并把 mutation 放入内存队列。
 - 远程下发:Web/API 新增、修改、删除任务后,徽章通过长轮询发现版本变化并拉取全量活跃任务。
 - 状态上报:徽章首次同步后立即 /report,之后每隔 TODO_REPORT_EVERY_N_SYNCS 次同步上报 Wi-Fi RSSI、任务总数、完成数和本地版本。
+
+## 设备配网与本地设置
+
+设备屏幕末尾的 `SETTINGS` 项进入状态页。第 1 页显示 Wi-Fi、设备 IP、`CF OK` 云端状态和本地 Web 服务；第 2 页显示云端主机、API 路径和端口；第 3 页显示配对 AP 信息。设置页使用实体按键短按 UP/DOWN 切页，长按 OK 返回。
+
+首次配网或 Wi-Fi 连续连接失败时，设备会创建开放热点 `EVA-PASSPORT-XXXX`，热点地址固定为 `192.168.192.1`，并通过 DHCP 给手机/电脑分配地址。连接热点后打开 `http://192.168.192.1/`，填写 Wi-Fi SSID、密码、DHCP 或静态 IP、云端 API 地址、端口和设备 Token，保存后设备自动重启。
+
+设备成功加入局域网后，同一配置页也可通过 `http://<设备IP>/` 打开，端口固定为 `80`。配置保存到 ESP32 NVS，不由服务端保存 Wi-Fi 凭据。Cloudflare HTTPS 使用动态 TLS 缓冲，以适配 ESP32-C3 的可用 RAM。
 - Wi-Fi 只写在固件本地 main/firmware_private.h;Cloudflare 服务端不保存 Wi-Fi SSID 或密码。
 - 云端只保存 Todo 数据、设备同步版本和设备报告。
 

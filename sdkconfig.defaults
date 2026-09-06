@@ -37,3 +37,7 @@ CONFIG_FREERTOS_HZ=1000
 # --- 网络同步 ---
 CONFIG_ESP_WIFI_STA_DISCONNECTED_PM_ENABLE=n
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+# Cloudflare HTTPS handshakes are memory intensive on ESP32-C3. Allocate TLS
+# buffers only while they are needed so LVGL and Wi-Fi can coexist.
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=y

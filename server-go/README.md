@@ -1,9 +1,11 @@
 # EVA Todo Go Server
 
-This is the self-hosted HTTP deployment of the same `/api/v1` contract used by the Cloudflare Worker. It is intentionally dependency-free for easy Docker deployment. Set `ADMIN_TOKEN` and `DEVICE_TOKEN`, then expose port `8080` privately or through a reverse proxy for public access.
+This is the self-hosted HTTP deployment of the same `/api/v1` contract used by the Cloudflare Worker. It is dependency-free and stores tasks/reports in the mounted `./data` volume. Set two different tokens: `ADMIN_TOKEN` for the Web UI/AI full access and `DEVICE_TOKEN` for badge sync/report access.
 
 ```sh
+cp .env.example .env
+# edit .env; never commit it
 docker compose up -d --build
 ```
 
-The current implementation covers health, task listing/creation, completion, reopen, and soft delete. Sync, reports, persistence, and long-poll event parity are next in the compatibility pass before production use.
+The API listens on `http://localhost:8080/api/v1` by default. Put it behind HTTPS and an authenticated reverse proxy before exposing it publicly. Supported endpoints and request formats are documented in `../docs/API.md`; `/sync`, `/events`, `/report`, `/reports`, CRUD, completion/reopen, filtering, and JSON persistence are implemented.

@@ -3,7 +3,10 @@ services:
     build: .
     ports:
       - "8080:8080"
+    volumes:
+      - ./data:/data
     environment:
       LISTEN_ADDR: ":8080"
-      ADMIN_TOKEN: "change-me"
-      DEVICE_TOKEN: "change-me-device"
+      DATA_FILE: "/data/eva-todo.json"
+      ADMIN_TOKEN: "${ADMIN_TOKEN:?set ADMIN_TOKEN in .env}"
+      DEVICE_TOKEN: "${DEVICE_TOKEN:?set DEVICE_TOKEN in .env}"

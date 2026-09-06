@@ -30,6 +30,7 @@ server/.dev.vars
 server/.env
 server/.env.*
 !server/.env.example
+!server-go/.env.example
 server/.wrangler/
 server/node_modules/
 server/secrets*.json

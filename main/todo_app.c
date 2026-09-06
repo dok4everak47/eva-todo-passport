@@ -10,11 +10,14 @@
 #include "todo_dotfont.h"
 #include "todo_text_assets.h"
 #include "todo_sync.h"
+#include "bsp_display.h"
 #include "lvgl.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include <stdio.h>
 #include <string.h>
+
+LV_FONT_DECLARE(todo_font_cjk_12);
 
 static const char *TAG = "todo_app";
 
@@ -105,17 +108,24 @@ static lv_image_dsc_t s_prog_dsc;
 static lv_obj_t *s_prog_img;
 static lv_obj_t *s_link_status;
 static lv_obj_t *s_settings_scr;
+static lv_obj_t *s_settings_info[4];
+static lv_obj_t *s_settings_page_label;
+static int s_settings_page;
 static lv_timer_t *s_status_timer;
 static bool s_in_settings;
 static bool s_screen_dimmed;
 static int64_t s_last_input_us;
 #define TODO_DEFAULT_DIM_SECONDS 60
+#define SETTINGS_PAGE_COUNT 3
+static char s_settings_host[64];
+static char s_settings_path[64];
 static uint8_t s_page_buf[PAGE_W * PAGE_H];
 static lv_image_dsc_t s_page_dsc;
 static lv_obj_t *s_page_img;
 
 static void apply_page(void);
 static void render_progress(void);
+static void render_settings_page(void);
 
 static void copy_trunc(char *dst, size_t dst_size, const char *src)
 {
@@ -134,15 +144,6 @@ static void set_item(int i, const char *id, const char *title, const char *notes
     s_items[i].en = s_titles[i];
     s_items[i].zh = s_notes[i];
     s_items[i].state = state;
-}
-
-static bool ascii_printable(const char *s)
-{
-    if (!s || !s[0]) return false;
-    for (const unsigned char *p = (const unsigned char *)s; *p; p++) {
-        if (*p < 0x20 || *p > 0x7E) return false;
-    }
-    return true;
 }
 
 static void reset_defaults(void)
@@ -257,7 +258,7 @@ static void render_link_status(void)
 {
     if (!s_link_status) return;
     lv_label_set_text(s_link_status,
-                      todo_sync_server_connected() ? "NET OK" :
+                      todo_sync_server_connected() ? "CF OK" :
                       (todo_sync_wifi_connected() ? "WIFI" : "OFF"));
     lv_obj_set_style_text_color(s_link_status,
         lv_color_hex(todo_sync_server_connected() ? C_GREEN : C_YELLOW), 0);
@@ -267,6 +268,7 @@ static void status_timer_cb(lv_timer_t *timer)
 {
     (void)timer;
     render_link_status();
+    if (s_in_settings && s_settings_info[0]) render_settings_page();
     if (!s_screen_dimmed && s_last_input_us > 0 &&
         esp_timer_get_time() - s_last_input_us >=
             (int64_t)TODO_DEFAULT_DIM_SECONDS * 1000000LL) {
@@ -274,6 +276,65 @@ static void status_timer_cb(lv_timer_t *timer)
         s_screen_dimmed = true;
         ESP_LOGI(TAG, "display backlight off after inactivity");
     }
+}
+
+static void render_settings_page(void)
+{
+    if (!s_settings_info[0]) return;
+
+    const bool wifi = todo_sync_wifi_connected();
+    const bool cloud = todo_sync_server_connected();
+    const bool ap = todo_sync_provisioning();
+    const char *ip = wifi ? todo_sync_ip_address() : (ap ? todo_sync_ap_ip_address() : "0.0.0.0");
+    const char *url = todo_sync_api_base_url();
+
+    // Separate the URL authority and path so neither is clipped on the 240px screen.
+    const char *authority = strstr(url, "://");
+    const char *host = authority ? authority + 3 : url;
+    const char *path = strchr(host, '/');
+    size_t host_len = path ? (size_t)(path - host) : strlen(host);
+    if (host_len >= sizeof(s_settings_host)) host_len = sizeof(s_settings_host) - 1;
+    memcpy(s_settings_host, host, host_len);
+    s_settings_host[host_len] = '\0';
+    snprintf(s_settings_path, sizeof(s_settings_path), "%s", path ? path : "/");
+
+    if (s_settings_page == 0) {
+        lv_label_set_text_fmt(s_settings_info[0], "WIFI    %s", wifi ? "CONNECTED" : "OFFLINE");
+        lv_label_set_text_fmt(s_settings_info[1], "IP      %s", ip);
+        lv_label_set_text_fmt(s_settings_info[2], "CLOUD   %s", cloud ? "CF OK" : "OFFLINE");
+        lv_label_set_text(s_settings_info[3], "WEB     HTTP :80");
+    } else if (s_settings_page == 1) {
+        lv_label_set_text(s_settings_info[0], "SERVER  CONFIGURED");
+        lv_label_set_text_fmt(s_settings_info[1], "HOST    %s", s_settings_host);
+        lv_label_set_text_fmt(s_settings_info[2], "PATH    %s", s_settings_path);
+        lv_label_set_text_fmt(s_settings_info[3], "PORT    %u", (unsigned)todo_sync_api_port());
+    } else {
+        lv_label_set_text_fmt(s_settings_info[0], "AP      %s", ap ? todo_sync_ap_ip_address() : "STANDBY");
+        lv_label_set_text(s_settings_info[1], "PAIR    EVA-PASSPORT");
+        lv_label_set_text(s_settings_info[2], "WEB     HTTP :80");
+        lv_label_set_text(s_settings_info[3], "CFG     WIFI + CLOUD");
+    }
+
+    for (int i = 0; i < 4; i++) {
+        uint32_t color = C_YELLOW;
+        if ((s_settings_page == 0 && i == 0 && wifi) ||
+            (s_settings_page == 0 && i == 2 && cloud) ||
+            (s_settings_page == 1 && i == 0 && url[0]) ||
+            (s_settings_page == 2 && i == 0 && ap)) {
+            color = C_GREEN;
+        }
+        lv_obj_set_style_text_color(s_settings_info[i], lv_color_hex(color), 0);
+    }
+    lv_label_set_text_fmt(s_settings_page_label, "%d / %d", s_settings_page + 1, SETTINGS_PAGE_COUNT);
+}
+
+static void settings_flip(int dir)
+{
+    int next = s_settings_page + dir;
+    if (next < 0) next = SETTINGS_PAGE_COUNT - 1;
+    if (next >= SETTINGS_PAGE_COUNT) next = 0;
+    s_settings_page = next;
+    render_settings_page();
 }
 
 static void render_page_indicator(void)
@@ -350,9 +411,8 @@ static void sync_row(int row)
         hide(s_title_lbl[row]);
         hide(s_note_lbl[row]);
     } else {
-        lv_label_set_text(s_title_lbl[row], item->en);
-        lv_label_set_text(s_note_lbl[row],
-                          ascii_printable(item->zh) ? item->zh : "SERVER TASK");
+        lv_label_set_text(s_title_lbl[row], item->en ? item->en : "REMOTE TASK");
+        lv_label_set_text(s_note_lbl[row], item->zh ? item->zh : "");
         lv_obj_set_style_text_color(s_title_lbl[row], lv_color_hex(col), 0);
         lv_obj_set_style_text_color(s_note_lbl[row], lv_color_hex(col), 0);
         hide(s_en_img[row]);
@@ -464,8 +524,8 @@ static void build_rows(void)
 
         s_en_img[r] = make_image(s_scr, &todo_text_t0_en, LABEL_X, y + 20, C_YELLOW);
         s_zh_img[r] = make_image(s_scr, &todo_text_t0_zh, LABEL_X, y + 1, C_YELLOW);
-        s_title_lbl[r] = make_label(s_scr, LABEL_X, y + 0, 176, &lv_font_montserrat_14);
-        s_note_lbl[r] = make_label(s_scr, LABEL_X, y + 16, 176, &lv_font_montserrat_14);
+        s_title_lbl[r] = make_label(s_scr, LABEL_X, y + 0, 176, &todo_font_cjk_12);
+        s_note_lbl[r] = make_label(s_scr, LABEL_X, y + 16, 176, &todo_font_cjk_12);
         hide(s_title_lbl[r]);
         hide(s_note_lbl[r]);
 
@@ -505,8 +565,24 @@ static void cursor_move(int dir)
     int vis = visible_count();
     if (s_page == todo_model_page_count(&s_model) - 1) vis++;
     int next = s_cursor + dir;
-    if (next < 0) next = 0;
-    if (next >= vis) next = vis - 1;
+    if (next < 0) {
+        if (s_page > 0) {
+            s_page--;
+            s_cursor = todo_model_visible_on_page(&s_model, s_page) - 1;
+            apply_page();
+            return;
+        }
+        next = 0;
+    }
+    if (next >= vis) {
+        if (s_page < todo_model_page_count(&s_model) - 1) {
+            s_page++;
+            s_cursor = 0;
+            apply_page();
+            return;
+        }
+        next = vis - 1;
+    }
     if (next != s_cursor) {
         s_cursor = next;
         sync_cursor();
@@ -534,19 +610,32 @@ static void toggle_current(void)
             lv_obj_set_style_bg_color(s_settings_scr, lv_color_hex(C_BG), 0);
             lv_obj_set_style_pad_all(s_settings_scr, 10, 0);
             lv_obj_t *title = lv_label_create(s_settings_scr);
-            lv_label_set_text(title, "DEVICE SETTINGS");
+            lv_label_set_text(title, "SETTINGS");
             lv_obj_set_style_text_color(title, lv_color_hex(C_GREEN), 0);
             lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
             lv_obj_set_pos(title, 10, 10);
-            lv_obj_t *info = lv_label_create(s_settings_scr);
-            lv_label_set_text_fmt(info, "WIFI: %s\\nIP: %s\\nCLOUD: %s\\n\\nLONG OK: BACK",
-                                  todo_sync_wifi_connected() ? "CONNECTED" : "OFFLINE",
-                                  todo_sync_ip_address(),
-                                  todo_sync_server_connected() ? "CONNECTED" : "OFFLINE");
-            lv_obj_set_style_text_color(info, lv_color_hex(C_YELLOW), 0);
-            lv_obj_set_style_text_font(info, &lv_font_montserrat_14, 0);
-            lv_obj_set_pos(info, 10, 58);
+            for (int i = 0; i < 4; i++) {
+                s_settings_info[i] = lv_label_create(s_settings_scr);
+                lv_obj_set_style_text_color(s_settings_info[i], lv_color_hex(C_YELLOW), 0);
+                lv_obj_set_style_text_font(s_settings_info[i], &lv_font_montserrat_14, 0);
+                lv_obj_set_width(s_settings_info[i], 210);
+                lv_label_set_long_mode(s_settings_info[i], LV_LABEL_LONG_CLIP);
+                lv_obj_set_pos(s_settings_info[i], 18, 54 + i * 30);
+            }
+            s_settings_page_label = lv_label_create(s_settings_scr);
+            lv_obj_set_style_text_color(s_settings_page_label, lv_color_hex(C_GREEN), 0);
+            lv_obj_set_style_text_font(s_settings_page_label, &lv_font_montserrat_14, 0);
+            lv_obj_set_width(s_settings_page_label, 42);
+            lv_label_set_long_mode(s_settings_page_label, LV_LABEL_LONG_CLIP);
+            lv_obj_set_pos(s_settings_page_label, 186, 14);
+            lv_obj_t *hint = lv_label_create(s_settings_scr);
+            lv_label_set_text(hint, "UP / DOWN PAGE   HOLD OK");
+            lv_obj_set_style_text_color(hint, lv_color_hex(C_GREEN), 0);
+            lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
+            lv_obj_set_pos(hint, 12, 242);
         }
+        s_settings_page = 0;
+        status_timer_cb(NULL);
         lv_screen_load(s_settings_scr);
         return;
     }
@@ -603,6 +692,14 @@ void todo_app_handle_button(bsp_btn_t btn, bsp_btn_ev_t ev)
         return;
     }
     if (s_in_settings) {
+        if (btn == BSP_BTN_UP && ev == BSP_BTN_PRESS) {
+            settings_flip(-1);
+            return;
+        }
+        if (btn == BSP_BTN_DOWN && ev == BSP_BTN_PRESS) {
+            settings_flip(1);
+            return;
+        }
         if (btn == BSP_BTN_OK && ev == BSP_BTN_LONG) {
             s_in_settings = false;
             lv_screen_load(s_scr);
