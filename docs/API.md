@@ -1,6 +1,6 @@
 # EVA Todo API
 
-Cloudflare Worker service for the ESP32 badge, Web UI, and AI agents.
+Cloudflare Worker and self-hosted Go service for the device, Web UI, and AI agents.
 
 Base URL after deployment:
 
@@ -22,7 +22,8 @@ Authorization: Bearer <ADMIN_TOKEN or DEVICE_TOKEN>
 
 - ADMIN_TOKEN: full read/write access, used by the web UI and AI agents.
 - DEVICE_TOKEN: device sync/report access, intended for the ESP32 firmware.
-- Tokens are Worker Secrets. Do not put them in Git or final answers.
+- Worker deployments store tokens as Worker Secrets; Go deployments read them
+  from container environment variables. Do not put them in Git or final answers.
 - Wi-Fi SSID/password are firmware-only values in main/firmware_private.h; the server never stores Wi-Fi credentials.
 
 ## Data Model
@@ -232,8 +233,6 @@ Cloudflare resources:
 - Binding name: DB
 - Required Worker Secrets: ADMIN_TOKEN, DEVICE_TOKEN
 
-For the Go server, set the same names as container environment variables. Mount `/data` (the supplied Compose file does this) so a container restart does not lose tasks or reports. Do not use the example token values in a public deployment.
-
 Deploy flow:
 
 ~~~powershell
@@ -259,6 +258,10 @@ Copy-Item .env.example .env
 docker compose up -d --build
 ~~~
 
+The container receives the same token names as environment variables. Mount
+`/data` through the supplied Compose file so restarts do not lose tasks or
+reports. Do not use the example token values in a public deployment.
+
 The default endpoints are:
 
 - API: `http://localhost:8080/api/v1`
@@ -270,6 +273,20 @@ the Web UI and admin endpoints to trusted users. Do not commit `.env` or reuse
 example token values in production.
 
 ## AI Skill
+
+The service is designed for AI Agent control as well as human web management.
+Both deployment types expose a generated Skill document from the current host:
+
+- Cloudflare Worker: `https://<your-domain>/skill.md`
+- Docker Go server: `http://<your-host>:8080/skill.md`
+
+The document contains the matching `/api/v1` base URL, supported operations,
+token roles, and safe request examples. It is generated from the request host,
+so an agent can use a custom domain, a private LAN deployment, or a temporary
+development URL without editing a hard-coded production address. The Web UI's
+`AI SKILL` button copies this same document; the endpoint is also directly
+downloadable and does not require a token. The AI Agent still needs
+`ADMIN_TOKEN` for task-management requests.
 
 Project-local Skill:
 
@@ -283,6 +300,22 @@ Expected environment:
 $env:EVA_TODO_BASE_URL = "https://<worker-or-custom-domain>/api/v1"
 $env:EVA_TODO_ADMIN_TOKEN = "<ADMIN_TOKEN>"
 ~~~
+
+`EVA_TODO_ADMIN_TOKEN` is the credential an AI Agent uses for task management
+and device report reads. `EVA_TODO_DEVICE_TOKEN` is intentionally narrower and
+is reserved for the firmware's sync, event polling, and report upload. Never
+give the device token to an agent that needs to create or modify tasks.
+
+Recommended Agent workflow:
+
+1. Download `/skill.md` from the selected deployment and load its current base URL.
+2. Call `GET /health`, then `GET /tasks` before changing anything.
+3. Use `POST /tasks`, `PATCH /tasks/{id}`, `POST /tasks/{id}/complete`,
+   `POST /tasks/{id}/reopen`, or `DELETE /tasks/{id}` as appropriate.
+4. After every write, call `GET /tasks` or `GET /tasks/{id}` and report the
+   resulting task id and status to the user.
+5. Ask for confirmation before destructive deletes when the user's request is
+   ambiguous; DELETE is a soft delete but is purged after 24 hours.
 
 Examples:
 

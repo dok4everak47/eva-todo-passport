@@ -1,26 +1,26 @@
 ---
 name: eva-todo-control
-description: Control the EVA Todo Cloudflare API for listing, creating, updating, completing, reopening, deleting badge tasks, and reading device reports. Use when the user asks an AI agent to manage tasks for the ESP32/FoloToy EVA Todo badge.
+description: Control a Todo API from an AI agent. List, create, update, complete, reopen, and delete tasks, and read device reports from either the Cloudflare or Docker deployment.
 ---
 
-# EVA Todo Control
+# Todo Control API Skill
 
-Use this skill to operate an EVA Todo API. The API is compatible with both the
-Cloudflare Worker and the self-hosted Go server, and is also used by the ESP32
-badge and the web UI.
+Use this skill to let an AI agent manage the shared Todo API. The API is
+compatible with both the Cloudflare Worker and the self-hosted Go server, and
+is also used by the device and the web UI.
 
 ## Required Configuration
 
 Load these values from environment variables, a local ignored env file, or the user's secret manager:
 
 - EVA_TODO_BASE_URL: API base URL ending in /api/v1.
-- EVA_TODO_ADMIN_TOKEN: admin token for full task control.
-- EVA_TODO_DEVICE_TOKEN: device token for reading, syncing, and reporting.
+- EVA_TODO_ADMIN_TOKEN: admin token for AI task control and report reads.
+- EVA_TODO_DEVICE_TOKEN: narrow device token for sync, events, and reports.
 
 `EVA_TODO_ADMIN_TOKEN` is required for creating, editing, completing,
-reopening, and deleting tasks, and for reading reports. The device token is
-intended for firmware: it can read tasks, sync task state, and upload reports,
-but cannot perform admin-only writes.
+reopening, and deleting tasks, and for reading device reports. The device token
+is intended for firmware: it can read tasks, sync task state, and upload
+reports, but cannot perform admin-only writes.
 
 The API uses `Authorization: Bearer <token>`. Set `EVA_TODO_BASE_URL` to the
 actual `/api/v1` URL of the deployment you want to control. For example:
@@ -31,7 +31,9 @@ http://your-self-hosted-server:8080/api/v1
 ```
 
 Do not assume a particular hostname; the same Skill works with custom domains,
-Cloudflare Workers, and Docker deployments.
+Cloudflare Workers, private LAN hosts, and Docker deployments. The deployed
+server also publishes a generated `/skill.md` at its own host. Load that file
+when available so the agent uses the current API URL.
 
 For a Worker deployment, `npm run secrets:init` generates random Admin and
 Device tokens into the ignored local `server/.dev.vars`; `npm run deploy:full`
@@ -56,6 +58,18 @@ node scripts/eva_todo.mjs update task-id --priority 3 --urgent true
 node scripts/eva_todo.mjs delete task-id
 node scripts/eva_todo.mjs reports
 ~~~
+
+## Agent workflow
+
+1. Call `health`, then `list`, before making a change.
+2. Use the admin token for task writes and report reads. Never use the device
+   token for an admin write.
+3. Keep badge-visible titles short; put Chinese details, URLs, and long
+   instructions in `notes`.
+4. After every write, call `list` or fetch the changed task and tell the user
+   the resulting task id and status.
+5. Ask for confirmation when a delete request is ambiguous. DELETE is a soft
+   delete, but deleted records are purged after 24 hours.
 
 If the helper script is not available, call the HTTP API directly with:
 

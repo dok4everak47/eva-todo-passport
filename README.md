@@ -24,6 +24,26 @@
 - Cloudflare Worker API 支持增删改查、完成/重开、软删除、长轮询事件、设备状态上报。
 - 服务端带一个极简特殊风格 Web 前台,可直接在浏览器里管理任务；前台的 `AI SKILL` 按钮会复制当前服务的 Skill 文档，也可直接访问 `/skill.md` 下载。文档说明 `ADMIN_TOKEN`（AI/管理）和 `DEVICE_TOKEN`（设备同步）的配置与权限，不包含真实 token。
 
+## AI Agent 管理
+
+这是一个可被 AI Agent 直接操作的 Todo API,不是只能由网页点击的服务。Cloudflare
+Worker 和 Docker Go 服务都会在当前部署地址提供动态 `GET /skill.md`；Skill 会自动写入
+当前 `/api/v1` 地址,不会假设固定域名。Web 前台的 `AI SKILL` 按钮会复制同一份文档,
+也可以直接下载后交给支持 Skills 的 AI Agent。
+
+AI Agent 使用 `ADMIN_TOKEN` 可以完成完整管理流程:
+
+- 查询、搜索和过滤任务,读取服务健康状态与设备上报信息。
+- 创建任务,修改标题/备注/优先级/截止时间/标签,标记完成或重新打开任务。
+- 软删除任务,并在每次写入后重新读取任务确认结果。
+- 使用标准 HTTP `Authorization: Bearer <token>` 调用 API,或直接运行
+  `skills/eva-todo-control/scripts/eva_todo.mjs`。
+
+`DEVICE_TOKEN` 只给固件使用,用于同步任务、长轮询事件和上传设备状态,不能执行 AI
+Agent 的管理写操作。不要把任意 token 写进 Skill、提交到 Git,或发送到公共对话中。
+完整权限矩阵、请求格式和 Agent 操作示例见 [docs/API.md](docs/API.md) 与
+`skills/eva-todo-control/SKILL.md`。
+
 ## 按键操作(右侧三键)
 
 | 按键 | 操作 |
@@ -203,4 +223,13 @@ firmware and AI Skill work with either backend.
 
 See [docs/API.md](docs/API.md) for endpoint details. Use the selected backend's
 `/api/v1` URL and its `DEVICE_TOKEN` in the device configuration.
+
+### AI agent management
+
+Both backends expose a deployment-aware `GET /skill.md` document. The Web UI can
+copy it with its AI Skill button, or an agent can download it directly from the
+same host. Configure the agent with the downloaded API base URL and
+`ADMIN_TOKEN`; use `DEVICE_TOKEN` only for firmware synchronization. Agents can
+list, search, create, edit, complete, reopen, soft-delete tasks, and read device
+reports through the documented Bearer-token API.
 

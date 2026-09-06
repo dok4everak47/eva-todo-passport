@@ -1,4 +1,4 @@
-# EVA Todo API Reference
+# Todo API Reference
 
 Base URL:
 
@@ -11,6 +11,11 @@ Auth:
 ~~~http
 Authorization: Bearer <EVA_TODO_ADMIN_TOKEN>
 ~~~
+
+Use `EVA_TODO_ADMIN_TOKEN` for an AI Agent that manages tasks. The firmware uses
+`EVA_TODO_DEVICE_TOKEN` for `/sync`, `/events`, and `/report`; it cannot use the
+device token for admin CRUD operations. The deployed server's `/skill.md`
+contains the current base URL and can be downloaded from either backend.
 
 Task fields:
 

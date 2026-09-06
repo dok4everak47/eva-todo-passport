@@ -11,7 +11,7 @@ focuses on the experience and leaves out implementation and hardware details.
 
 **简介**
 
-把日常待办变成一份来自内部工作台的任务指令。打开后可以浏览任务，使用上下键移动选择，短按 OK 完成或重新打开当前任务，长按 OK 进入删除确认；任务太多时用长按上下键翻页。紧急事项会以醒目的红色标出，完成进度和网络同步状态一目了然。它适合记录工作、家务和临时灵感，也适合喜欢高对比度特殊视觉、机械式操作和“完成一项就推进一格”节奏的人。联网后，网页或 AI 创建的任务会自动同步到设备，设备上的完成状态也会回传。
+把日常待办变成一份来自内部工作台的任务指令。打开后可以浏览任务，使用上下键移动选择，短按 OK 完成或重新打开当前任务，长按 OK 进入删除确认；任务太多时用长按上下键翻页。紧急事项会以醒目的红色标出，完成进度和网络同步状态一目了然。它适合记录工作、家务和临时灵感，也适合喜欢高对比度特殊视觉、机械式操作和“完成一项就推进一格”节奏的人。联网后，网页或 AI 创建的任务会自动同步到设备，设备上的完成状态也会回传。服务端同时提供可下载的 AI Skill，其他 AI Agent 配置管理令牌后即可通过 API 查询、创建、修改和完成任务。
 
 ## English
 
@@ -30,6 +30,8 @@ work, chores, and quick ideas, and especially satisfying for anyone who enjoys
 high-contrast visuals, deliberate mechanical controls, and the rhythm of advancing one
 task at a time. When connected, tasks created from the web or an AI assistant
 arrive automatically, and completions made on the device are reported back.
+The server also publishes a downloadable AI Skill, allowing another agent to
+query, create, edit, and complete tasks through the API with an admin token.
 
 ## Source
 
