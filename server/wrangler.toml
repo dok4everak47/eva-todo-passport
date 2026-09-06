@@ -1,18 +1,13 @@
 name = "eva-todo-api"
 main = "src/index.js"
 compatibility_date = "2026-09-05"
-account_id = "your-cloudflare-account-id"
 workers_dev = true
 
 [triggers]
 crons = ["0 * * * *"]
 
-[[routes]]
-pattern = "your-custom-domain.example"
-custom_domain = true
-
 [[d1_databases]]
 binding = "DB"
 database_name = "eva_todo_db"
- database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "00000000-0000-0000-0000-000000000000"
 migrations_dir = "migrations"

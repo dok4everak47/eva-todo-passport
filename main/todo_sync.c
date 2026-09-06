@@ -99,7 +99,7 @@ static const char CONFIG_HTML[] =
     "<label>STATIC IP</label><input name='ip' value='%s'><label>GATEWAY</label><input name='gw' value='%s'>"
     "<label>NETMASK</label><input name='mask' value='%s'></fieldset>"
     "<fieldset><legend>CLOUD API</legend><label>SERVER URL</label>"
-    "<input name='url' value='%s' placeholder='https://your-custom-domain.example/api/v1'>"
+    "<input name='url' value='%s' placeholder='https://your-server.example/api/v1'>"
     "<label>SERVER PORT</label><input name='port' type='number' value='%u'>"
     "<label>DEVICE TOKEN</label><input name='token' type='password' value='%s'></fieldset>"
     "<button type='submit'>SAVE AND RESTART</button></form>"

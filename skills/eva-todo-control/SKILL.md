@@ -22,9 +22,16 @@ reopening, and deleting tasks, and for reading reports. The device token is
 intended for firmware: it can read tasks, sync task state, and upload reports,
 but cannot perform admin-only writes.
 
-The API uses `Authorization: Bearer <token>`. For a Cloudflare deployment,
-`EVA_TODO_BASE_URL` can be `https://your-custom-domain.example/api/v1`; for Docker use
-the reachable server address ending in `/api/v1`.
+The API uses `Authorization: Bearer <token>`. Set `EVA_TODO_BASE_URL` to the
+actual `/api/v1` URL of the deployment you want to control. For example:
+
+```text
+https://your-worker.example.workers.dev/api/v1
+http://your-self-hosted-server:8080/api/v1
+```
+
+Do not assume a particular hostname; the same Skill works with custom domains,
+Cloudflare Workers, and Docker deployments.
 
 Keep both tokens in environment variables or a local secret store. Never print
 tokens, commit tokens, or ask a user to paste a token into a public prompt.

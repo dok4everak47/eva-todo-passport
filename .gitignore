@@ -43,3 +43,6 @@ _ref_eva-musicplayer/
 
 # Host-generated previews
 docs/preview_*.png
+
+# Local-only publisher installation
+skills/folotoy-ai-passport-publisher/

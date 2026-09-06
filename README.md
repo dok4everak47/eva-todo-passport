@@ -6,7 +6,7 @@
 Todo List 固件 + Cloudflare Worker/D1 服务端。开机先进入本地任务清单,联网后和
 云端 API 同步,右侧三颗物理按键可本地勾选并回传服务器。
 
-![界面预览 Page 1](docs/preview_todo_page1.png)
+![界面预览 Page 1](assets/eva-todo-cover.png)
 
 ## 它做什么
 
