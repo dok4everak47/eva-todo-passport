@@ -5,7 +5,9 @@ description: Control the EVA Todo Cloudflare API for listing, creating, updating
 
 # EVA Todo Control
 
-Use this skill to operate the EVA Todo API used by the ESP32 badge and web UI.
+Use this skill to operate an EVA Todo API. The API is compatible with both the
+Cloudflare Worker and the self-hosted Go server, and is also used by the ESP32
+badge and the web UI.
 
 ## Required Configuration
 
@@ -13,8 +15,19 @@ Load these values from environment variables, a local ignored env file, or the u
 
 - EVA_TODO_BASE_URL: API base URL ending in /api/v1.
 - EVA_TODO_ADMIN_TOKEN: admin token for full task control.
+- EVA_TODO_DEVICE_TOKEN: device token for reading, syncing, and reporting.
 
-Never print tokens, commit tokens, or include them in generated documentation.
+`EVA_TODO_ADMIN_TOKEN` is required for creating, editing, completing,
+reopening, and deleting tasks, and for reading reports. The device token is
+intended for firmware: it can read tasks, sync task state, and upload reports,
+but cannot perform admin-only writes.
+
+The API uses `Authorization: Bearer <token>`. For a Cloudflare deployment,
+`EVA_TODO_BASE_URL` can be `https://your-custom-domain.example/api/v1`; for Docker use
+the reachable server address ending in `/api/v1`.
+
+Keep both tokens in environment variables or a local secret store. Never print
+tokens, commit tokens, or ask a user to paste a token into a public prompt.
 
 ## Preferred Tooling
 

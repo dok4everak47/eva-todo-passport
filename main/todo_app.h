@@ -24,6 +24,7 @@ typedef struct {
 } todo_app_remote_task_t;
 
 typedef void (*todo_app_mutation_cb_t)(const char *id, todo_state_t state, void *user);
+typedef void (*todo_app_delete_cb_t)(const char *id, void *user);
 
 // 创建并载入主界面。须在持有 LVGL 锁时调用(例如 main.c 里 bsp_lvgl_lock 后)。
 void todo_app_start(void);
@@ -33,6 +34,7 @@ void todo_app_handle_button(bsp_btn_t btn, bsp_btn_ev_t ev);
 
 // 本地勾选/取消时通知同步模块。回调必须非常轻量,不能做网络 IO。
 void todo_app_set_mutation_callback(todo_app_mutation_cb_t cb, void *user);
+void todo_app_set_delete_callback(todo_app_delete_cb_t cb, void *user);
 
 // 合并服务器下发的任务增量。调用方须持有 LVGL 锁。
 void todo_app_apply_remote_tasks(const todo_app_remote_task_t *tasks, int count,

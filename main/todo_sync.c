@@ -42,6 +42,7 @@ static const char *TAG = "todo_sync";
 typedef struct {
     char id[TODO_APP_ID_LEN];
     todo_state_t state;
+    bool deleted;
     uint32_t seq;
     bool pending;
 } mutation_t;
@@ -75,6 +76,7 @@ static todo_runtime_config_t s_config;
 static char s_config_page[4096];
 
 static void queue_mutation(const char *id, todo_state_t state, void *user);
+static void queue_delete(const char *id, void *user);
 static void sync_task(void *arg);
 static void start_config_server(void);
 static void start_provisioning(void);
@@ -483,10 +485,34 @@ static void queue_mutation(const char *id, todo_state_t state, void *user)
     if (slot < 0) slot = 0;  // tiny FIFO overwrite: newest user intent wins on badge
     snprintf(s_mutations[slot].id, sizeof(s_mutations[slot].id), "%s", id);
     s_mutations[slot].state = state;
+    s_mutations[slot].deleted = false;
     s_mutations[slot].seq = ++s_mutation_seq;
     s_mutations[slot].pending = true;
     if (s_mutation_lock) xSemaphoreGive(s_mutation_lock);
     ESP_LOGI(TAG, "queued mutation: %s -> %s", id, operation_for_state(state));
+}
+
+static void queue_delete(const char *id, void *user)
+{
+    (void)user;
+    if (!id || !id[0]) return;
+    if (s_mutation_lock) xSemaphoreTake(s_mutation_lock, portMAX_DELAY);
+    int slot = -1;
+    for (int i = 0; i < MAX_MUTATIONS; i++) {
+        if (s_mutations[i].pending && strcmp(s_mutations[i].id, id) == 0) {
+            slot = i;
+            break;
+        }
+        if (slot < 0 && !s_mutations[i].pending) slot = i;
+    }
+    if (slot < 0) slot = 0;
+    snprintf(s_mutations[slot].id, sizeof(s_mutations[slot].id), "%s", id);
+    s_mutations[slot].state = TODO_STATE_PENDING;
+    s_mutations[slot].deleted = true;
+    s_mutations[slot].seq = ++s_mutation_seq;
+    s_mutations[slot].pending = true;
+    if (s_mutation_lock) xSemaphoreGive(s_mutation_lock);
+    ESP_LOGI(TAG, "queued mutation: %s -> delete", id);
 }
 
 static void build_sync_body(char *buf, size_t size, const mutation_t muts[MAX_MUTATIONS], int count)
@@ -500,7 +526,7 @@ static void build_sync_body(char *buf, size_t size, const mutation_t muts[MAX_MU
             "%s{\"clientMutationId\":\"%lu\",\"operation\":\"%s\",\"task\":{\"id\":\"%s\"}}",
             i ? "," : "",
             (unsigned long)muts[i].seq,
-            operation_for_state(muts[i].state),
+            muts[i].deleted ? "delete" : operation_for_state(muts[i].state),
             muts[i].id);
     }
     if (n < (int)size) snprintf(buf + n, size - (size_t)n, "]}");
@@ -639,6 +665,7 @@ void todo_sync_start(void)
     todo_config_load(&s_config);
     s_mutation_lock = xSemaphoreCreateMutex();
     todo_app_set_mutation_callback(queue_mutation, NULL);
+    todo_app_set_delete_callback(queue_delete, NULL);
     if (!configured()) ESP_LOGW(TAG, "wifi/cloud defaults incomplete; provisioning AP will be available");
 
     s_wifi_events = xEventGroupCreate();

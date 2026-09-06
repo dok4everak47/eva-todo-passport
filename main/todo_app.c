@@ -18,6 +18,7 @@
 #include <string.h>
 
 LV_FONT_DECLARE(todo_font_cjk_12);
+LV_FONT_DECLARE(todo_font_cjk_14);
 
 static const char *TAG = "todo_app";
 
@@ -91,6 +92,8 @@ static int s_page;
 static int s_cursor;
 static todo_app_mutation_cb_t s_mutation_cb;
 static void *s_mutation_user;
+static todo_app_delete_cb_t s_delete_cb;
+static void *s_delete_user;
 
 static lv_obj_t *s_frame[TODO_PAGE_SIZE];
 static lv_obj_t *s_cursor_bar[TODO_PAGE_SIZE];
@@ -113,10 +116,15 @@ static lv_obj_t *s_settings_page_label;
 static int s_settings_page;
 static lv_timer_t *s_status_timer;
 static bool s_in_settings;
+static bool s_delete_prompt;
+static bool s_delete_choice_yes;
+static lv_obj_t *s_delete_overlay;
+static lv_obj_t *s_delete_choice_no;
+static lv_obj_t *s_delete_choice_yes_obj;
 static bool s_screen_dimmed;
 static int64_t s_last_input_us;
 #define TODO_DEFAULT_DIM_SECONDS 60
-#define SETTINGS_PAGE_COUNT 3
+#define SETTINGS_PAGE_COUNT 4
 static char s_settings_host[64];
 static char s_settings_path[64];
 static uint8_t s_page_buf[PAGE_W * PAGE_H];
@@ -126,6 +134,8 @@ static lv_obj_t *s_page_img;
 static void apply_page(void);
 static void render_progress(void);
 static void render_settings_page(void);
+static void show_delete_prompt(void);
+static void close_delete_prompt(bool confirm);
 
 static void copy_trunc(char *dst, size_t dst_size, const char *src)
 {
@@ -309,11 +319,16 @@ static void render_settings_page(void)
         lv_label_set_text_fmt(s_settings_info[1], "PATH  %s", s_settings_path);
         lv_label_set_text_fmt(s_settings_info[2], "PORT  %u", (unsigned)todo_sync_api_port());
         lv_label_set_text_fmt(s_settings_info[3], "MODE  %s", todo_sync_dhcp_enabled() ? "DHCP" : "STATIC");
-    } else {
+    } else if (s_settings_page == 2) {
         lv_label_set_text_fmt(s_settings_info[0], "PAIR  %s", ap ? "READY" : "STANDBY");
         lv_label_set_text_fmt(s_settings_info[1], "SSID  %s", ap ? todo_sync_ap_ssid() : "EVA-PASSPORT");
         lv_label_set_text_fmt(s_settings_info[2], "AP IP %s", ap ? todo_sync_ap_ip_address() : "192.168.192.1");
         lv_label_set_text(s_settings_info[3], "WEB   HTTP :80");
+    } else {
+        lv_label_set_text(s_settings_info[0], "使用说明 / HELP");
+        lv_label_set_text(s_settings_info[1], "上下键  移动 / 翻页");
+        lv_label_set_text(s_settings_info[2], "OK短按  完成任务");
+        lv_label_set_text(s_settings_info[3], "OK长按  删除确认");
     }
 
     for (int i = 0; i < 4; i++) {
@@ -321,7 +336,8 @@ static void render_settings_page(void)
         if ((s_settings_page == 0 && i == 0 && wifi) ||
             (s_settings_page == 0 && i == 2 && cloud) ||
             (s_settings_page == 1 && i == 0 && url[0]) ||
-            (s_settings_page == 2 && i == 0 && ap)) {
+            (s_settings_page == 2 && i == 0 && ap) ||
+            (s_settings_page == 3 && i == 0)) {
             color = C_GREEN;
         }
         lv_obj_set_style_text_color(s_settings_info[i], lv_color_hex(color), 0);
@@ -336,6 +352,72 @@ static void settings_flip(int dir)
     if (next >= SETTINGS_PAGE_COUNT) next = 0;
     s_settings_page = next;
     render_settings_page();
+}
+
+static void update_delete_choice(void)
+{
+    if (!s_delete_choice_no || !s_delete_choice_yes_obj) return;
+    lv_obj_set_style_text_color(s_delete_choice_no,
+        lv_color_hex(s_delete_choice_yes ? C_YELLOW : C_GREEN), 0);
+    lv_obj_set_style_text_color(s_delete_choice_yes_obj,
+        lv_color_hex(s_delete_choice_yes ? C_GREEN : C_YELLOW), 0);
+}
+
+static void show_delete_prompt(void)
+{
+    if (s_delete_prompt || global_of(s_cursor) < 0) return;
+    s_delete_prompt = true;
+    s_delete_choice_yes = false;
+    s_delete_overlay = panel(s_scr, 18, 92, 204, 132, C_BG, C_RED, 2);
+    lv_obj_t *title = make_label(s_delete_overlay, 12, 10, 180, &todo_font_cjk_14);
+    lv_label_set_text(title, "警告 / WARNING");
+    lv_obj_set_style_text_color(title, lv_color_hex(C_RED), 0);
+    lv_obj_t *body = make_label(s_delete_overlay, 12, 42, 180, &todo_font_cjk_12);
+    lv_label_set_text(body, "删除这项任务？");
+    lv_obj_set_style_text_color(body, lv_color_hex(C_YELLOW), 0);
+    s_delete_choice_no = make_label(s_delete_overlay, 18, 88, 72, &todo_font_cjk_12);
+    s_delete_choice_yes_obj = make_label(s_delete_overlay, 112, 88, 72, &todo_font_cjk_12);
+    lv_label_set_text(s_delete_choice_no, "[否]");
+    lv_label_set_text(s_delete_choice_yes_obj, "[是]");
+    update_delete_choice();
+}
+
+static void close_delete_prompt(bool confirm)
+{
+    if (!s_delete_prompt) return;
+    int g = global_of(s_cursor);
+    char id[TODO_APP_ID_LEN] = { 0 };
+    if (confirm && g >= 0) {
+        const todo_item_t *item = todo_model_item(&s_model, g);
+        if (item && item->id) snprintf(id, sizeof(id), "%s", item->id);
+    }
+    if (s_delete_overlay) lv_obj_delete(s_delete_overlay);
+    s_delete_overlay = NULL;
+    s_delete_choice_no = NULL;
+    s_delete_choice_yes_obj = NULL;
+    s_delete_prompt = false;
+    if (confirm && id[0]) {
+        for (int i = g; i + 1 < s_item_count; i++) {
+            memmove(s_ids[i], s_ids[i + 1], sizeof(s_ids[i]));
+            memmove(s_titles[i], s_titles[i + 1], sizeof(s_titles[i]));
+            memmove(s_notes[i], s_notes[i + 1], sizeof(s_notes[i]));
+            s_states[i] = s_states[i + 1];
+        }
+        s_item_count--;
+        for (int i = 0; i < s_item_count; i++) {
+            s_items[i].id = s_ids[i];
+            s_items[i].en = s_titles[i];
+            s_items[i].zh = s_notes[i];
+            s_items[i].state = (todo_state_t)s_states[i];
+        }
+        todo_model_init(&s_model, s_items, s_states, s_item_count);
+        if (s_cursor >= visible_count() + ((s_page == todo_model_page_count(&s_model) - 1) ? 1 : 0)) {
+            s_cursor = visible_count() > 0 ? visible_count() - 1 : 0;
+        }
+        apply_page();
+        render_progress();
+        if (s_delete_cb) s_delete_cb(id, s_delete_user);
+    }
 }
 
 static void render_page_indicator(void)
@@ -378,8 +460,8 @@ static void sync_row(int row)
             hide(s_urgent[row]);
             hide(s_en_img[row]);
             hide(s_zh_img[row]);
-            lv_label_set_text(s_title_lbl[row], "SETTINGS");
-            lv_label_set_text(s_note_lbl[row], "DEVICE CONFIG");
+            lv_label_set_text(s_title_lbl[row], "设置 / SETTINGS");
+            lv_label_set_text(s_note_lbl[row], "设备配置 / CONFIG");
             lv_obj_set_style_text_color(s_title_lbl[row], lv_color_hex(C_GREEN), 0);
             lv_obj_set_style_text_color(s_note_lbl[row], lv_color_hex(C_GREEN), 0);
             show(s_title_lbl[row]);
@@ -525,8 +607,8 @@ static void build_rows(void)
 
         s_en_img[r] = make_image(s_scr, &todo_text_t0_en, LABEL_X, y + 20, C_YELLOW);
         s_zh_img[r] = make_image(s_scr, &todo_text_t0_zh, LABEL_X, y + 1, C_YELLOW);
-        s_title_lbl[r] = make_label(s_scr, LABEL_X, y + 0, 176, &todo_font_cjk_12);
-        s_note_lbl[r] = make_label(s_scr, LABEL_X, y + 16, 176, &todo_font_cjk_12);
+        s_title_lbl[r] = make_label(s_scr, LABEL_X, y + 0, 176, &todo_font_cjk_14);
+        s_note_lbl[r] = make_label(s_scr, LABEL_X, y + 17, 176, &todo_font_cjk_12);
         hide(s_title_lbl[r]);
         hide(s_note_lbl[r]);
 
@@ -615,14 +697,14 @@ static void toggle_current(void)
             lv_obj_set_style_border_width(s_settings_scr, 0, 0);
             lv_obj_set_style_pad_all(s_settings_scr, 0, 0);
             lv_obj_t *title = lv_label_create(s_settings_scr);
-            lv_label_set_text(title, "SETTINGS");
+            lv_label_set_text(title, "设置 / SETTINGS");
             lv_obj_set_style_text_color(title, lv_color_hex(C_GREEN), 0);
-            lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+            lv_obj_set_style_text_font(title, &todo_font_cjk_14, 0);
             lv_obj_set_pos(title, 12, 8);
             for (int i = 0; i < 4; i++) {
                 s_settings_info[i] = lv_label_create(s_settings_scr);
                 lv_obj_set_style_text_color(s_settings_info[i], lv_color_hex(C_YELLOW), 0);
-                lv_obj_set_style_text_font(s_settings_info[i], &lv_font_montserrat_14, 0);
+                lv_obj_set_style_text_font(s_settings_info[i], &todo_font_cjk_12, 0);
                 lv_obj_set_width(s_settings_info[i], 220);
                 lv_obj_set_height(s_settings_info[i], 22);
                 lv_label_set_long_mode(s_settings_info[i], LV_LABEL_LONG_CLIP);
@@ -630,19 +712,19 @@ static void toggle_current(void)
             }
             s_settings_page_label = lv_label_create(s_settings_scr);
             lv_obj_set_style_text_color(s_settings_page_label, lv_color_hex(C_GREEN), 0);
-            lv_obj_set_style_text_font(s_settings_page_label, &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_font(s_settings_page_label, &todo_font_cjk_12, 0);
             lv_obj_set_width(s_settings_page_label, 54);
             lv_label_set_long_mode(s_settings_page_label, LV_LABEL_LONG_CLIP);
             lv_obj_set_pos(s_settings_page_label, 176, 14);
             lv_obj_t *hint = lv_label_create(s_settings_scr);
-            lv_label_set_text(hint, "UP/DOWN  PAGE");
+            lv_label_set_text(hint, "上下键  切页");
             lv_obj_set_style_text_color(hint, lv_color_hex(C_GREEN), 0);
-            lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_font(hint, &todo_font_cjk_12, 0);
             lv_obj_set_pos(hint, 12, 256);
             lv_obj_t *back_hint = lv_label_create(s_settings_scr);
-            lv_label_set_text(back_hint, "HOLD OK  BACK");
+            lv_label_set_text(back_hint, "长按 OK  返回");
             lv_obj_set_style_text_color(back_hint, lv_color_hex(C_GREEN), 0);
-            lv_obj_set_style_text_font(back_hint, &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_font(back_hint, &todo_font_cjk_12, 0);
             lv_obj_set_pos(back_hint, 12, 280);
         }
         s_settings_page = 0;
@@ -702,6 +784,15 @@ void todo_app_handle_button(bsp_btn_t btn, bsp_btn_ev_t ev)
         s_screen_dimmed = false;
         return;
     }
+    if (s_delete_prompt) {
+        if ((btn == BSP_BTN_UP || btn == BSP_BTN_DOWN) && ev == BSP_BTN_PRESS) {
+            s_delete_choice_yes = !s_delete_choice_yes;
+            update_delete_choice();
+        } else if (btn == BSP_BTN_OK && ev == BSP_BTN_CLICK) {
+            close_delete_prompt(s_delete_choice_yes);
+        }
+        return;
+    }
     if (s_in_settings) {
         if (btn == BSP_BTN_UP && ev == BSP_BTN_PRESS) {
             settings_flip(-1);
@@ -727,8 +818,9 @@ void todo_app_handle_button(bsp_btn_t btn, bsp_btn_ev_t ev)
         else if (ev == BSP_BTN_LONG) flip_page(1);
         break;
     case BSP_BTN_OK:
-        if (ev == BSP_BTN_CLICK) toggle_current();
-        break;
+         if (ev == BSP_BTN_CLICK) toggle_current();
+         else if (ev == BSP_BTN_LONG) show_delete_prompt();
+         break;
     default:
         break;
     }
@@ -738,6 +830,12 @@ void todo_app_set_mutation_callback(todo_app_mutation_cb_t cb, void *user)
 {
     s_mutation_cb = cb;
     s_mutation_user = user;
+}
+
+void todo_app_set_delete_callback(todo_app_delete_cb_t cb, void *user)
+{
+    s_delete_cb = cb;
+    s_delete_user = user;
 }
 
 void todo_app_apply_remote_tasks(const todo_app_remote_task_t *tasks, int count,

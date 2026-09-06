@@ -2,10 +2,12 @@ const API_VERSION = "v1";
 const STATUS = new Set(["todo", "doing", "done", "archived"]);
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     try {
       const url = new URL(request.url);
+      if (ctx?.waitUntil) ctx.waitUntil(purgeDeleted(env));
       if (request.method === "OPTIONS") return cors(new Response(null, { status: 204 }));
+      if (url.pathname === "/skill.md" && request.method === "GET") return skillResponse(request);
       if (url.pathname === "/" || url.pathname === "/index.html") return html();
       if (!url.pathname.startsWith(`/api/${API_VERSION}/`)) return notFound();
 
@@ -61,6 +63,10 @@ export default {
       console.error(err);
       return error("internal_error", "Internal error", 500);
     }
+  }
+  ,
+  async scheduled(controller, env) {
+    await purgeDeleted(env);
   }
 };
 
@@ -142,6 +148,14 @@ async function health(env) {
 async function currentVersion(env) {
   const row = await env.DB.prepare("SELECT value FROM meta WHERE key = 'version'").first();
   return Number(row?.value || 0);
+}
+
+async function purgeDeleted(env) {
+  if (!env.DB) return;
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  await env.DB.prepare(
+    "DELETE FROM tasks WHERE deleted_at IS NOT NULL AND deleted_at <= ?"
+  ).bind(cutoff).run();
 }
 
 async function nextVersion(env) {
@@ -462,6 +476,53 @@ function html() {
   });
 }
 
+function skillResponse(request) {
+  const baseUrl = new URL(request.url).origin + `/api/${API_VERSION}`;
+  const body = SKILL_MD.replaceAll("{{BASE_URL}}", baseUrl);
+  return new Response(body, {
+    headers: {
+      "content-type": "text/markdown; charset=utf-8",
+      "content-disposition": 'attachment; filename="eva-todo-skill.md"',
+      "cache-control": "no-store"
+    }
+  });
+}
+
+const SKILL_MD = `# EVA Todo API Skill
+
+Use this API to control the EVA Todo badge and its web task list.
+
+## Connection
+
+- Base URL: {{BASE_URL}}
+- Admin credential: set \`EVA_TODO_ADMIN_TOKEN\`
+- Device credential: set \`EVA_TODO_DEVICE_TOKEN\`
+
+Send the selected credential as \`Authorization: Bearer <token>\`.
+
+## Permissions
+
+- \`ADMIN_TOKEN\`: list, create, edit, complete, reopen, delete tasks, and read reports.
+- \`DEVICE_TOKEN\`: badge \`/sync\`, \`/events\`, and \`/report\`; it cannot change tasks through the admin CRUD endpoints.
+- Never ask the user to paste a token into a public prompt, commit it, or print it.
+
+## Common calls
+
+\`GET /health\`
+
+\`GET /tasks\`
+
+\`POST /tasks\` with JSON \`{"title":"SHORT TITLE","notes":"中文详情","priority":1,"urgent":false}\`
+
+\`PATCH /tasks/{id}\` to edit a task.
+
+\`POST /tasks/{id}/complete\` or \`POST /tasks/{id}/reopen\`.
+
+\`DELETE /tasks/{id}\` soft-deletes it. Deleted tasks are physically purged after 24 hours.
+
+After every write, call \`GET /tasks\` and report the resulting task id/status. Keep badge-visible titles short; put long Chinese instructions in \`notes\`.
+`;
+
 const INDEX_HTML = `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -485,7 +546,7 @@ const INDEX_HTML = `<!doctype html>
   <div class="top"><div class="brand">任务リスト<small>TASK LIST</small></div><div class="internal">内部<small>INTERNAL</small><i class="slash"></i><i class="slash s2"></i><i class="slash s3"></i></div></div>
   <div class="bar">
     <input id="token" type="password" placeholder="ADMIN TOKEN">
-    <button id="saveToken">SAVE TOKEN</button>
+     <button id="saveToken">SAVE TOKEN</button><button id="copySkill">AI SKILL</button><span id="skillStatus" class="muted"></span>
     <input id="q" placeholder="SEARCH / TAG / TITLE">
     <select id="filter"><option value="">ALL</option><option value="todo">TODO</option><option value="doing">DOING</option><option value="done">DONE</option><option value="archived">ARCHIVED</option></select>
     <button id="refresh">REFRESH</button>
@@ -560,6 +621,16 @@ document.addEventListener('click', async e => {
   }
 });
 $('saveToken').onclick = () => { localStorage.evaTodoToken = $('token').value; load(); };
+$('copySkill').onclick = async () => {
+  try {
+    const r = await fetch('/skill.md');
+    const text = await r.text();
+    await navigator.clipboard.writeText(text);
+    $('skillStatus').textContent = 'SKILL COPIED · token required';
+  } catch (e) {
+    $('skillStatus').textContent = 'OPEN /skill.md TO DOWNLOAD';
+  }
+};
 $('refresh').onclick = load; $('q').oninput = () => clearTimeout(window._q) || (window._q=setTimeout(load,250)); $('filter').onchange = load;
 function localDateInput(s){
   if(!s) return '';

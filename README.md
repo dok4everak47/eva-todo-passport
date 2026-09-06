@@ -22,7 +22,7 @@ Todo List 固件 + Cloudflare Worker/D1 服务端。开机先进入本地任务�
 - 底部导航:上页/PREV、PAGE 1/2、下页/NEXT 直角黄框,页码用点阵数字。
 - 底部荧光绿横条收尾。
 - Cloudflare Worker API 支持增删改查、完成/重开、软删除、长轮询事件、设备状态上报。
-- 服务端带一个极简 EVA 风格 Web 前台,可直接在浏览器里管理任务。
+- 服务端带一个极简 EVA 风格 Web 前台,可直接在浏览器里管理任务；前台的 `AI SKILL` 按钮会复制当前服务的 Skill 文档，也可直接访问 `/skill.md` 下载。文档说明 `ADMIN_TOKEN`（AI/管理）和 `DEVICE_TOKEN`（设备同步）的配置与权限，不包含真实 token。
 
 ## 按键操作(右侧三键)
 

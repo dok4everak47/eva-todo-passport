@@ -57,7 +57,18 @@ type Store struct {
 
 func main() {
 	store := loadStore(os.Getenv("DATA_FILE"))
+	store.purgeExpired()
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			store.purgeExpired()
+		}
+	}()
 	mux := http.NewServeMux()
+	mux.HandleFunc("/", webHandler)
+	mux.HandleFunc("/index.html", webHandler)
+	mux.HandleFunc("/skill.md", skillHandler)
 	mux.HandleFunc("/api/v1/health", health(store))
 	mux.HandleFunc("/api/v1/tasks", taskCollection(store))
 	mux.HandleFunc("/api/v1/tasks/", taskResource(store))
@@ -122,6 +133,29 @@ func (s *Store) bumpLocked() int {
 		log.Printf("persist failed: %v", err)
 	}
 	return s.Version
+}
+
+func (s *Store) purgeExpired() {
+	cutoff := time.Now().UTC().Add(-24 * time.Hour)
+	s.Lock()
+	removed := false
+	for id, task := range s.Tasks {
+		if task.DeletedAt == nil {
+			continue
+		}
+		deletedAt, err := time.Parse(time.RFC3339Nano, *task.DeletedAt)
+		if err != nil {
+			deletedAt, err = time.Parse(time.RFC3339, *task.DeletedAt)
+		}
+		if err == nil && deletedAt.Before(cutoff) {
+			delete(s.Tasks, id)
+			removed = true
+		}
+	}
+	if removed {
+		s.bumpLocked()
+	}
+	s.Unlock()
 }
 
 func cors(next http.Handler) http.Handler {

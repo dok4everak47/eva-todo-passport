@@ -212,6 +212,11 @@ https://eva-todo-api.<your-subdomain>.workers.dev/
 
 Enter ADMIN_TOKEN in the password field. The token is stored in browser localStorage for convenience. The ESP32 configuration page stores only DEVICE_TOKEN; it never needs ADMIN_TOKEN.
 
+The web UI `AI SKILL` button copies the same self-contained Skill document available
+at `GET /skill.md`. The downloadable Markdown contains the current API base URL,
+setup instructions for `ADMIN_TOKEN` and `DEVICE_TOKEN`, their permission boundaries,
+and safe request examples. It never includes the actual secret values.
+
 ## Deployment
 
 Cloudflare resources:

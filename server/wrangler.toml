@@ -4,8 +4,11 @@ compatibility_date = "2026-09-05"
 account_id = "your-cloudflare-account-id"
 workers_dev = true
 
+[triggers]
+crons = ["0 * * * *"]
+
 [[routes]]
-pattern = "evatodo.lixining.com"
+pattern = "your-custom-domain.example"
 custom_domain = true
 
 [[d1_databases]]
