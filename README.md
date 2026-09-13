@@ -152,6 +152,26 @@ Skill 下载地址为 `http://localhost:8080/skill.md`。公网部署时请在�
 `DEVICE_TOKEN`;管理网页和 AI 使用 `ADMIN_TOKEN`。两种部署可以分别运行,不要让同一设备
 同时指向两个服务。
 
+## USB 网页端(免 Wi-Fi 管理)
+
+除服务端/API 之外,本仓库还带一个**通过 USB 串口**管理任务的网页端:插上 USB 后
+浏览器打开 `http://127.0.0.1:8899/` 即可增删改查,**不需要设备连 Wi-Fi,也不依赖任何服务端**。
+
+```sh
+cd usb-web
+./start.sh              # 自动发现串口(/dev/cu.usbmodem*)并打开浏览器
+./start.sh --no-mirror  # 不镜像到本机 Go 服务
+```
+
+- ESP32-C3 的 USB 只有 USB-Serial/JTAG 控制器、**没有 USB-OTG**,无法提供 USB 网络接口,
+  因此由主机侧 `usb-web/server.py`(纯 Python 标准库)做「浏览器 <-> 串口」的桥。
+- 固件侧 `main/todo_usb.c` 提供行协议(`#` + JSON:`list` / `set` / `ping`,以及设备主动上报的
+  `changed` 事件),任务清单以 **NVS** 持久化(namespace `todo_tasks`),拔 USB、断电都不丢。
+- Wi-Fi 同步逻辑保持不变;网页端的改动在**确认下发设备成功后**才会镜像到本机 Go 服务,
+  避免两条链路分叉。
+- 注意:网页端运行时会独占串口,刷机 / `idf.py monitor` 前请先停止它(设计上不做开机常驻)。
+- 协议、字段上限与设计说明见 [usb-web/README.md](usb-web/README.md)。
+
 ## 工程结构
 
 ```text
@@ -162,6 +182,8 @@ main/
   todo_model.c          纯任务数据模型(勾选/计数/分页,主机可测)
   todo_dotfont.c        5x7 点阵字体("02 / 05" 与页码)
   todo_text_assets.c    预渲染中英文字位图(生成,勿手改)
+  todo_usb.c            USB 串口命令通道(#+JSON 行协议 + NVS 任务持久化)
+usb-web/               主机侧 USB 网页端(浏览器 <-> 串口桥,纯标准库)
 tools/                  文字位图与界面预览生成器
 tests/                  主机侧测试(模型 / 点阵)
 docs/                   文档与 UI 预览
@@ -232,4 +254,25 @@ same host. Configure the agent with the downloaded API base URL and
 `ADMIN_TOKEN`; use `DEVICE_TOKEN` only for firmware synchronization. Agents can
 list, search, create, edit, complete, reopen, soft-delete tasks, and read device
 reports through the documented Bearer-token API.
+
+### USB web console (no Wi-Fi required)
+
+This fork also ships a **USB-serial** task console: with the badge plugged in,
+open `http://127.0.0.1:8899/` in a browser to create, edit, complete or delete
+tasks — **no Wi-Fi and no server required**.
+
+```sh
+cd usb-web && ./start.sh
+```
+
+The ESP32-C3 has a USB-Serial/JTAG controller only (no USB-OTG), so it cannot
+expose a USB network interface; `usb-web/server.py` (Python standard library
+only) bridges the browser to the serial port. On the firmware side,
+`main/todo_usb.c` implements a line protocol (`#` + JSON: `list`, `set`, `ping`,
+plus device-initiated `changed` events) and persists the task list in NVS, so it
+survives unplugging and power loss. Wi-Fi sync is unchanged, and the console
+mirrors changes to the local Go server only after a successful push to the
+device, so the two paths cannot diverge. The serial port is held exclusively
+while the console runs (stop it before flashing; it is intentionally not
+installed as a login daemon). Protocol details: [usb-web/README.md](usb-web/README.md).
 
