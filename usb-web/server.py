@@ -25,6 +25,7 @@ import sys
 import termios
 import threading
 import time
+import uuid
 import tty
 import urllib.error
 import urllib.parse
@@ -39,6 +40,7 @@ IDLE_REFRESH_FAST = 2.0
 IDLE_REFRESH_SLOW = 10.0
 PAGE_IDLE_WINDOW = 10.0
 MAX_TASKS = 12
+RECENT_RIDS: dict[str, tuple[float, str]] = {}   # rid -> (时间, 任务id),防重复提交
 TITLE_MAX = 63
 NOTES_MAX = 79
 LINE_MAX = 4000
@@ -214,14 +216,17 @@ class Device:
 
     # --- 本地改动 + 下发 ---
     def push_tasks(self, tasks: list[dict]) -> tuple[bool, str]:
-        with self._lock:
-            self.tasks = tasks[:MAX_TASKS]
         if not self.connected:
             return False, "设备未连接,无法下发"
         if not self.synced:
             return False, "尚未读到设备上的清单,已拒绝写入(请稍候或点\"从设备刷新\")"
-        ok = self.send({"cmd": "set", "tasks": self.tasks})
-        return ok, ("" if ok else (self.last_error or "下发失败"))
+        payload = tasks[:MAX_TASKS]
+        ok = self.send({"cmd": "set", "tasks": payload})
+        if ok:
+            with self._lock:
+                self.tasks = payload        # 只有确实写进串口后才更新本地视图
+            return True, ""
+        return False, (self.last_error or "下发失败")
 
 
 # ---------------------------------------------------------------------------
@@ -268,7 +273,11 @@ class Mirror:
             cur = self._req("GET", "/tasks") or {}
             remote = {t.get("id"): t for t in (cur.get("tasks") or [])}
             local_ids = {t["id"] for t in tasks}
+            # 设备只保留 MAX_TASKS 条:本地清单一旦填满,远端多出来的任务很可能是被设备
+            # 截断(设备根本显示不了)而不是用户删除的——此时一律不下发 delete,避免误删服务器数据。
+            may_truncate = len(tasks) >= MAX_TASKS
             mutations = []
+            skipped = 0
             for t in tasks:
                 mutations.append({
                     "operation": "upsert",
@@ -282,9 +291,15 @@ class Mirror:
                 })
             for rid in remote:
                 if rid not in local_ids:
+                    if may_truncate:
+                        skipped += 1        # 设备显示不了,不代表用户删了
+                        continue
                     mutations.append({"operation": "delete", "task": {"id": rid}})
             self._req("POST", "/sync", {"deviceId": "usb-web", "localVersion": 0, "mutations": mutations})
-            self.status = f"已同步({len(mutations)} 项)"
+            if skipped:
+                self.status = f"已同步({len(mutations)} 项;跳过 {skipped} 项删除:设备已满 {MAX_TASKS} 条)"
+            else:
+                self.status = f"已同步({len(mutations)} 项)"
         except Exception as exc:          # 镜像失败绝不能影响用户请求
             self.status = f"跳过({type(exc).__name__})"
 
@@ -324,6 +339,7 @@ button.go{border-color:var(--g);color:var(--g)}button.go:hover{background:var(--
 .cnt{font-size:11px;color:var(--dim);margin-left:8px;font-weight:400}
 .cnt.bad{color:var(--r)}
 .msg.bad{color:var(--r)}
+.bar b.bad{color:var(--r)}
 .ed{display:grid;gap:6px;width:100%}
 </style></head><body>
 <div class="brand"><span>任务列表 <small>TASK LIST</small></span><small>USB / SERIAL</small></div>
@@ -333,6 +349,7 @@ button.go{border-color:var(--g);color:var(--g)}button.go:hover{background:var(--
   <span>固件: <b id="s-fw">-</b></span>
   <span>进度: <b id="s-prog">-</b></span>
   <span>镜像: <b id="s-mirror">-</b></span>
+  <span>上限: <b id="s-cap">-</b></span>
   <span>更新: <b id="s-seen">-</b></span>
 </div>
 <div class="panel">
@@ -391,6 +408,8 @@ async function poll(){try{const j=await api('/api/state');state=j;
  $('s-link').className=j.connected?'ok':'bad';$('s-fw').textContent=j.firmware||'-';
  $('s-prog').textContent=j.total?`${j.done}/${j.total} 已完成`:'-';
  $('s-mirror').textContent=j.mirror||'-';
+ $('s-cap').textContent=(j.tasks?j.tasks.length:0)+'/'+(j.cap||'-')+(j.truncated?' 已满':'');
+ $('s-cap').className=j.truncated?'bad':'';
  $('s-seen').textContent=fmt(j.lastSeen);
  if(!editing){render();}                                                       // 编辑中保持 DOM 不动
  refreshEditCnt();
@@ -403,9 +422,12 @@ async function act(act,id,payload){try{
  if(act==='ed-save'){await api('/api/tasks/'+encodeURIComponent(id),{method:'PATCH',body:JSON.stringify({title:$('e-t').value,notes:$('e-n').value,urgent:$('e-u').checked})});editing=null;say('已保存')}
  if(act==='ed-cancel'){editing=null}
  await poll()}catch(e){say(e.message,true)}}
-$('add').onclick=async()=>{try{if(!$('n-title').value.trim())throw Error('主标题不能为空');
- await api('/api/tasks',{method:'POST',body:JSON.stringify({title:$('n-title').value,notes:$('n-notes').value,urgent:$('n-urgent').checked})});
- $('n-title').value='';$('n-notes').value='';$('n-urgent').checked=false;say('已下发到设备');await poll()}catch(e){say(e.message,true)}};
+$('add').onclick=async()=>{if(!$('n-title').value.trim())return say('主标题不能为空',true);
+ const rid=(self.crypto&&crypto.randomUUID)?crypto.randomUUID():String(Date.now())+Math.random();
+ $('add').disabled=true;                                   // 防双击重复建任务
+ try{await api('/api/tasks',{method:'POST',body:JSON.stringify({title:$('n-title').value,notes:$('n-notes').value,urgent:$('n-urgent').checked,rid})});
+ $('n-title').value='';$('n-notes').value='';$('n-urgent').checked=false;say('已下发到设备');await poll()}
+ catch(e){say(e.message,true)}finally{$('add').disabled=false}};
 $('refresh').onclick=async()=>{try{await api('/api/refresh',{method:'POST'});say('已请求设备清单');await poll()}catch(e){say(e.message,true)}};
 function refreshEditCnt(){if(editing){updateCnt('e-t','e-t-info','title');updateCnt('e-n','e-n-info','notes');}}
 document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
@@ -444,7 +466,12 @@ class Handler(BaseHTTPRequestHandler):
             return {}
 
     def _clean(self, s: str, limit: int) -> str:
-        return re.sub(r"[\r\n\t]+", " ", str(s or "")).strip()[:limit]
+        t = re.sub(r"[\r\n\t]+", " ", str(s or "")).strip()
+        # 按"字节上限"截断(与固件 title 64B / notes 80B 一致),但绝不切开多字节字符——
+        # 否则标题末尾会留下半个汉字(显示为 ).
+        if len(t.encode("utf-8")) <= limit:
+            return t
+        return t.encode("utf-8")[:limit].decode("utf-8", "ignore")
 
     # --- 路由 ---
     def do_GET(self):
@@ -460,22 +487,38 @@ class Handler(BaseHTTPRequestHandler):
             self.device.last_page = time.time()     # 页面在轮询 => 启用准实时补拉
             snap = self.device.snapshot()
             snap["mirror"] = self.mirror.status
+            snap["cap"] = MAX_TASKS
+            snap["truncated"] = len(snap.get("tasks") or []) >= MAX_TASKS
             self._json(snap)
         else:
             self._json({"error": "not_found"}, 404)
 
     def do_POST(self):
+        print(f"[REQ] {self.command} {self.path} ua={self.headers.get('User-Agent','')[:28]!r} "
+              f"peer={self.client_address[0]} len={self.headers.get('Content-Length','-')}", flush=True)
         if self.path == "/api/tasks":
             data = self._body()
             title = self._clean(data.get("title"), TITLE_MAX)
             notes = self._clean(data.get("notes"), NOTES_MAX)
+            rid = str(data.get("rid") or "")
             if not title:
                 return self._json({"error": "主标题不能为空"}, 400)
             tasks = list(self.device.snapshot()["tasks"])
             if len(tasks) >= MAX_TASKS:
                 return self._json({"error": f"最多 {MAX_TASKS} 条,请先删掉一些"}, 400)
+            if rid and rid in RECENT_RIDS and time.time() - RECENT_RIDS[rid][0] < 30:
+                prev_id = RECENT_RIDS[rid][1]
+                if any(t["id"] == prev_id for t in (self.device.snapshot()["tasks"] or [])):
+                    return self._json({"ok": True, "dup": True, "id": prev_id,
+                                       "tasks": self.device.snapshot()["tasks"], "mirror": self.mirror.status})
+                RECENT_RIDS.pop(rid, None)      # 上次没落地(设备离线等):允许重试
+            new_id = f"usb-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}"   # 随机后缀,杜绝碰撞
+            if rid:
+                RECENT_RIDS[rid] = (time.time(), new_id)
+                for k in [k for k, v in RECENT_RIDS.items() if time.time() - v[0] > 60]:
+                    RECENT_RIDS.pop(k, None)
             tasks.append({
-                "id": f"usb-{int(time.time() * 1000)}-{len(tasks)}",
+                "id": new_id,
                 "title": title,
                 "notes": notes,
                 "status": "todo",
@@ -488,6 +531,8 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"error": "not_found"}, 404)
 
     def do_PATCH(self):
+        print(f"[REQ] {self.command} {self.path} ua={self.headers.get('User-Agent','')[:28]!r} "
+              f"peer={self.client_address[0]} len={self.headers.get('Content-Length','-')}", flush=True)
         m = re.fullmatch(r"/api/tasks/(.+)", self.path)
         if not m:
             return self._json({"error": "not_found"}, 404)
@@ -515,6 +560,8 @@ class Handler(BaseHTTPRequestHandler):
         return self._push(tasks)
 
     def do_DELETE(self):
+        print(f"[REQ] {self.command} {self.path} ua={self.headers.get('User-Agent','')[:28]!r} "
+              f"peer={self.client_address[0]} len={self.headers.get('Content-Length','-')}", flush=True)
         m = re.fullmatch(r"/api/tasks/(.+)", self.path)
         if not m:
             return self._json({"error": "not_found"}, 404)
