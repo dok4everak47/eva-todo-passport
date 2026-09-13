@@ -262,6 +262,56 @@ class Mirror:
         with opener.open(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
+    def fetch_history(self) -> list[dict]:
+        """历史记录:已完成(done)与已归档(archived=已删除)的任务,按完成时间倒序。
+        completedAt 只有 /sync 路径会自动打,直接 PATCH 的不打,故回退用 updatedAt。"""
+        cur = self._req("GET", "/tasks?includeDeleted=1", timeout=4.0) or {}
+        out = []
+        for t in (cur.get("tasks") or []):
+            st = str(t.get("status") or "")
+            completed = t.get("completedAt")
+            # 历史 = 当前已完成,或"完成过且已归档"的留存记录。
+            # 排除:删除但从未完成的(那是删除记录),以及被"恢复为未完成"的(已完成置空但
+            # completedAt 仍残留——服务端直接 PATCH 不会清它,故按状态判断)。
+            if not (st == "done" or (st == "archived" and completed)):
+                continue
+            done_at = completed or t.get("updatedAt")
+            out.append({
+                "id": t.get("id"),
+                "title": str(t.get("title") or ""),
+                "notes": str(t.get("notes") or ""),
+                "status": st,
+                "archived": st == "archived",
+                "canRestore": st != "archived",     # 归档在服务端不可撤销,故不给恢复
+                "doneAt": str(done_at or t.get("updatedAt") or ""),
+            })
+        out.sort(key=lambda x: x["doneAt"], reverse=True)
+        return out
+
+    def act_history(self, task_id: str, op: str) -> tuple[bool, str]:
+        """restore=恢复为未完成;delete=归档(从牌子列表移走,历史保留)。"""
+        if not self.token:
+            return False, "没有 ADMIN_TOKEN,无法操作服务端"
+        path = "/tasks/" + urllib.parse.quote(str(task_id), safe="")
+        if op == "restore":
+            try:
+                cur = self._req("GET", "/tasks?includeDeleted=1", timeout=4.0) or {}
+                one = next((t for t in (cur.get("tasks") or []) if t.get("id") == task_id), None)
+                if one and str(one.get("status")) == "archived":
+                    return False, "已归档的记录在服务端无法撤销(只能留存查看)"
+            except Exception:
+                pass
+        try:
+            if op == "restore":
+                self._req("PATCH", path, {"status": "todo"})
+            elif op == "delete":
+                self._req("DELETE", path)
+            else:
+                return False, "未知操作"
+            return True, ""
+        except Exception as exc:
+            return False, f"服务端不可达({type(exc).__name__})"
+
     def sync(self, tasks: list[dict]) -> None:
         """把当前清单镜像到 Go 服务:/sync 的 upsert 保留我们的 id,缺失的 delete。"""
         if not self.enabled:
@@ -368,6 +418,13 @@ button.go{border-color:var(--g);color:var(--g)}button.go:hover{background:var(--
   <button id="refresh">从设备刷新</button>
   <div id="list"></div>
 </div>
+<div class="panel">
+  <h2>历史记录 / HISTORY <span class="cnt" id="h-count"></span></h2>
+  <div class="row"><button id="h-refresh">刷新历史</button>
+  <input id="h-search" placeholder="搜索已完成的记录" style="flex:1;min-width:120px"></div>
+  <div class="cnt" style="margin:6px 0 0">勾选完成会自动记入这里(任务仍留在牌子列表里)。「恢复为未完成」改回未完成;「归档」把它从牌子列表移走、记录留在这里。牌子本身没有时钟,所以牌子上只按完成先后排序,带时间戳的记录以服务端为准。</div>
+  <div id="hlist"></div>
+</div>
 <script>
 const $=id=>document.getElementById(id);let state={tasks:[]},editing=null,lastSig='';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -375,6 +432,9 @@ function say(t,bad){const m=$('msg');m.textContent=t;m.className='msg'+(bad?' ba
 async function api(path,opt={}){const r=await fetch(path,{headers:{'content-type':'application/json'},...opt});
  const j=await r.json().catch(()=>({}));if(!r.ok||j.ok===false)throw Error(j.error||r.statusText);return j}
 function fmt(ts){return ts?new Date(ts*1000).toLocaleTimeString('zh-CN',{hour12:false}):'-'}
+function fmt2(s){if(!s)return '-';const d=new Date(s);if(isNaN(d))return '-';
+ const p=n=>String(n).padStart(2,'0');
+ return `${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;}
 function render(){const t=state.tasks||[];
  const sig=JSON.stringify(t)+'|'+editing;if(sig===lastSig)return;lastSig=sig;   // 关键:避免定时轮询抹掉正在输入的内容
  $('list').innerHTML=t.length?t.map((x,i)=>{
@@ -415,8 +475,33 @@ async function poll(){try{const j=await api('/api/state');state=j;
  refreshEditCnt();
  if(editing&&!state.tasks.some(t=>t.id===editing)){editing=null;lastSig='';}   // 编辑中的任务被删掉了
 }catch(e){$('s-link').textContent='服务异常';$('s-link').className='bad'}}
+let histTasks=[];
+function histRender(){const box=$('hlist');if(!box)return;
+ const q=($('h-search').value||'').trim().toLowerCase();
+ const rows=histTasks.filter(x=>!q||((x.title+' '+x.notes).toLowerCase().includes(q)));
+ box.innerHTML=rows.length?rows.map(x=>`<div class="task ${x.archived?'':'done'}"><div>
+   <div class="t-title">${esc(x.title)}</div><div class="t-notes">${esc(x.notes)}</div>
+   <div class="meta">${x.archived?'已归档':'已完成'} · ${fmt2(x.doneAt)}</div></div>
+   <div style="align-self:start;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+   ${x.canRestore?`<button data-hist="restore" data-id="${esc(x.id)}">恢复为未完成</button>
+   <button class="danger" data-hist="delete" data-id="${esc(x.id)}">归档(移出牌子)</button>`:''}</div></div>`).join('')
+ :'<div class="empty">没有匹配的历史记录</div>';}
+async function histLoad(){try{const j=await api('/api/history');histTasks=j.tasks||[];
+ $('h-count').textContent=(j.ok===false?('不可用'):(j.count||0)+' 条');histRender();}
+ catch(e){$('hlist').innerHTML='<div class="empty">历史加载失败</div>'}}
+async function histAct(op,id){try{
+ if(op==='delete'&&!confirm('把这条从牌子列表移走并归档?(历史记录里仍可查)'))return;
+ const j=await api('/api/history/'+encodeURIComponent(id),{method:'POST',body:JSON.stringify({op})});
+ histTasks=j.tasks||[];$('h-count').textContent=(j.count||0)+' 条';histRender();
+ say(op==='restore'?'已恢复为未完成':'已归档');await poll();
+}catch(e){say(e.message,true)}}
+$('h-refresh').onclick=()=>histLoad();
+$('h-search').oninput=()=>histRender();
+document.addEventListener('click',e=>{const b=e.target.closest('button[data-hist]');
+ if(b)histAct(b.dataset.hist,b.dataset.id)});
 async function act(act,id,payload){try{
  if(act==='toggle'){const t=state.tasks.find(x=>x.id===id);await api('/api/tasks/'+encodeURIComponent(id),{method:'PATCH',body:JSON.stringify({status:t.status==='done'?'todo':'done'})})}
+ if(act==='toggle'||act==='del')setTimeout(histLoad,800);      // 完成/删除会进历史
  if(act==='del'&&confirm('删除这条任务?'))await api('/api/tasks/'+encodeURIComponent(id),{method:'DELETE'})
  if(act==='edit'){editing=id;render();return}
  if(act==='ed-save'){await api('/api/tasks/'+encodeURIComponent(id),{method:'PATCH',body:JSON.stringify({title:$('e-t').value,notes:$('e-n').value,urgent:$('e-u').checked})});editing=null;say('已保存')}
@@ -435,7 +520,7 @@ document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)r
  if(b.dataset.edSave)return act('ed-save',b.dataset.edSave);
  if(b.dataset.edCancel)return act('ed-cancel')});
 updateCnt('n-title','n-title-info','title');updateCnt('n-notes','n-notes-info','notes');
-poll();setInterval(poll,1500);
+poll();setInterval(poll,1500);histLoad();setInterval(histLoad,30000);
 </script></body></html>
 """
 
@@ -483,6 +568,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+        elif self.path == "/api/history":
+            try:
+                hist = self.mirror.fetch_history()
+                self._json({"ok": True, "tasks": hist, "count": len(hist)})
+            except Exception as exc:
+                self._json({"ok": False, "tasks": [], "error": f"历史需要连上本机服务端({type(exc).__name__})"})
         elif self.path == "/api/state":
             self.device.last_page = time.time()     # 页面在轮询 => 启用准实时补拉
             snap = self.device.snapshot()
@@ -525,6 +616,17 @@ class Handler(BaseHTTPRequestHandler):
                 "urgent": bool(data.get("urgent")),
             })
             return self._push(tasks)
+        if self.path.startswith("/api/history/"):
+            tid = urllib.parse.unquote(self.path[len("/api/history/"):])
+            data = self._body()
+            ok, err = self.mirror.act_history(tid, str(data.get("op") or ""))
+            if not ok:
+                return self._json({"ok": False, "error": err}, 409)
+            try:
+                hist = self.mirror.fetch_history()
+            except Exception:
+                hist = []
+            return self._json({"ok": True, "tasks": hist, "count": len(hist)})
         if self.path == "/api/refresh":
             self.device.send({"cmd": "list"})
             return self._json({"ok": True})

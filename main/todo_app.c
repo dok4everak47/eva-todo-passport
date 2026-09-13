@@ -428,12 +428,139 @@ static void render_page_indicator(void)
     draw_dot_text(s_page_img, s_page_buf, PAGE_W, PAGE_H, PAGE_SCALE, text);
 }
 
+
+/* ---------------------------------------------------------------------------
+ * 历史记录:列表最后一页的「历史 / HISTORY」行进入,看所有已完成的任务。
+ * - 任务完成后仍留在牌子上(方案:不改变列表与 02/05 计数),历史是它的"记录视图"
+ * - 牌子上没有时钟,所以这里不显示完成时间,只按"最近完成在前"排序;
+ *   带时间戳的完整历史在网页端看(时间戳以 Go 服务 completedAt 为准)
+ * - 入口行需要最后一页有 2 个空行;空间不足时优先保「设置」入口(与改动前一致)
+ * ------------------------------------------------------------------------- */
+static uint16_t s_done_seq[TODO_APP_MAX_TASKS];   /* 每条的完成顺序(0=未完成) */
+static uint16_t s_done_tick;
+
+static int special_row_history(void)
+{
+    if (s_page != todo_model_page_count(&s_model) - 1) return -1;
+    int vc = visible_count();
+    return (vc + 2 <= TODO_PAGE_SIZE) ? vc : -1;      /* 需要 2 个空行 */
+}
+
+static int special_row_settings(void)
+{
+    if (s_page != todo_model_page_count(&s_model) - 1) return -1;
+    int vc = visible_count();
+    if (vc + 2 <= TODO_PAGE_SIZE) return vc + 1;      /* 历史 + 设置都在 */
+    return vc;                                        /* 只剩一行:设置(与原行为一致) */
+}
+
+#define HIST_ROWS 6
+static lv_obj_t *s_hist_scr;
+static lv_obj_t *s_hist_mark[HIST_ROWS];
+static lv_obj_t *s_hist_title[HIST_ROWS];
+static lv_obj_t *s_hist_note[HIST_ROWS];
+static lv_obj_t *s_hist_head;
+static lv_obj_t *s_hist_hint;
+static bool s_in_history;
+static int  s_hist_page;
+
+static int history_collect(int *out, int max)
+{
+    int n = 0;
+    for (int i = 0; i < s_item_count && i < TODO_APP_MAX_TASKS; i++) {
+        if (s_states[i] != TODO_STATE_DONE) continue;
+        if (n < max) out[n] = i;
+        n++;
+    }
+    for (int a = 0; a + 1 < n && a < max; a++) {       /* 最近完成的在前(数量很小,冒泡足够) */
+        for (int b = a + 1; b < n && b < max; b++) {
+            if (s_done_seq[out[b]] > s_done_seq[out[a]]) {
+                int t = out[a]; out[a] = out[b]; out[b] = t;
+            }
+        }
+    }
+    return n < max ? n : max;
+}
+
+static void history_fill(void)
+{
+    int idx[TODO_APP_MAX_TASKS];
+    int n = history_collect(idx, TODO_APP_MAX_TASKS);
+    int pages = (n + HIST_ROWS - 1) / HIST_ROWS;
+    if (pages < 1) pages = 1;
+    if (s_hist_page >= pages) s_hist_page = pages - 1;
+    if (s_hist_page < 0) s_hist_page = 0;
+
+    char buf[64];
+    if (n == 0) {
+        lv_label_set_text(s_hist_head, "暂无已完成任务");
+        lv_label_set_text(s_hist_hint, "OK 返回");
+    } else {
+        snprintf(buf, sizeof(buf), "已完成 %d 条 · 第 %d/%d 页", n, s_hist_page + 1, pages);
+        lv_label_set_text(s_hist_head, buf);
+        lv_label_set_text(s_hist_hint, pages > 1 ? "上下键 翻页 · OK 返回" : "OK 返回");
+    }
+
+    for (int r = 0; r < HIST_ROWS; r++) {
+        int k = s_hist_page * HIST_ROWS + r;
+        if (k >= n) {
+            hide(s_hist_mark[r]); hide(s_hist_title[r]); hide(s_hist_note[r]);
+            continue;
+        }
+        const todo_item_t *it = todo_model_item(&s_model, idx[k]);
+        lv_label_set_text(s_hist_title[r], (it && it->en && it->en[0]) ? it->en : "TASK");
+        lv_label_set_text(s_hist_note[r], (it && it->zh) ? it->zh : "");
+        show(s_hist_mark[r]); show(s_hist_title[r]); show(s_hist_note[r]);
+    }
+    ESP_LOGI(TAG, "history: %d done, page %d/%d", n, s_hist_page + 1, pages);
+}
+
+static void show_history(void)
+{
+    if (!s_hist_scr) {
+        s_hist_scr = lv_obj_create(NULL);
+        lv_obj_remove_flag(s_hist_scr, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_size(s_hist_scr, 240, 320);
+        lv_obj_set_style_bg_color(s_hist_scr, lv_color_hex(C_BG), 0);
+        lv_obj_set_style_bg_opa(s_hist_scr, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(s_hist_scr, 0, 0);
+        lv_obj_set_style_pad_all(s_hist_scr, 0, 0);
+
+        panel(s_hist_scr, 0, 0, 240, 40, C_GREEN, C_GREEN, 0);
+        lv_obj_t *hdr = make_label(s_hist_scr, 10, 11, 220, &todo_font_cjk_14);
+        lv_label_set_text(hdr, "历史记录 / HISTORY");
+        lv_obj_set_style_text_color(hdr, lv_color_hex(C_BG), 0);
+
+        s_hist_head = make_label(s_hist_scr, 10, 48, 220, &todo_font_cjk_12);
+        lv_obj_set_style_text_color(s_hist_head, lv_color_hex(C_GREEN), 0);
+
+        for (int r = 0; r < HIST_ROWS; r++) {
+            int y = 76 + r * 36;
+            s_hist_mark[r]  = panel(s_hist_scr, 12, y + 6, 12, 12, C_GREEN, C_GREEN, 0);
+            s_hist_title[r] = make_label(s_hist_scr, 34, y + 0, 196, &todo_font_cjk_14);
+            lv_obj_set_height(s_hist_title[r], 18);
+            lv_label_set_long_mode(s_hist_title[r], LV_LABEL_LONG_MODE_DOTS);
+            s_hist_note[r]  = make_label(s_hist_scr, 34, y + 18, 196, &todo_font_cjk_12);
+            lv_obj_set_height(s_hist_note[r], 16);
+            lv_label_set_long_mode(s_hist_note[r], LV_LABEL_LONG_MODE_DOTS);
+            lv_obj_set_style_text_color(s_hist_title[r], lv_color_hex(C_GREEN), 0);
+            lv_obj_set_style_text_color(s_hist_note[r], lv_color_hex(C_GREEN), 0);
+        }
+
+        s_hist_hint = make_label(s_hist_scr, 10, 296, 220, &todo_font_cjk_12);
+        lv_obj_set_style_text_color(s_hist_hint, lv_color_hex(C_GREEN), 0);
+    }
+    s_hist_page = 0;
+    history_fill();
+    s_in_history = true;
+    lv_screen_load(s_hist_scr);
+}
+
 static void sync_cursor(void)
 {
     for (int r = 0; r < TODO_PAGE_SIZE; r++) {
-        bool settings_row = s_page == todo_model_page_count(&s_model) - 1 &&
-                            r == visible_count();
-        if ((!settings_row && global_of(r) < 0) || r != s_cursor) hide(s_cursor_bar[r]);
+        bool special_row = (r == special_row_history() || r == special_row_settings());
+        if ((!special_row && global_of(r) < 0) || r != s_cursor) hide(s_cursor_bar[r]);
         else show(s_cursor_bar[r]);
     }
 }
@@ -454,7 +581,21 @@ static void sync_row(int row)
     int g = global_of(row);
     if (g < 0) {
         int last_page = todo_model_page_count(&s_model) - 1;
-        if (s_page == last_page && row == visible_count()) {
+        if (s_page == last_page && row == special_row_history()) {
+            show(s_frame[row]);
+            hide(s_check[row]);
+            hide(s_urgent[row]);
+            hide(s_en_img[row]);
+            hide(s_zh_img[row]);
+            lv_label_set_text(s_title_lbl[row], "历史 / HISTORY");
+            lv_label_set_text(s_note_lbl[row], "已完成记录 / DONE LOG");
+            lv_obj_set_style_text_color(s_title_lbl[row], lv_color_hex(C_GREEN), 0);
+            lv_obj_set_style_text_color(s_note_lbl[row], lv_color_hex(C_GREEN), 0);
+            show(s_title_lbl[row]);
+            show(s_note_lbl[row]);
+            return;
+        }
+        if (s_page == last_page && row == special_row_settings()) {
             show(s_frame[row]);
             hide(s_check[row]);
             hide(s_urgent[row]);
@@ -652,7 +793,9 @@ static void build_nav(void)
 static void cursor_move(int dir)
 {
     int vis = visible_count();
-    if (s_page == todo_model_page_count(&s_model) - 1) vis++;
+    int srow = special_row_settings();
+    if (srow >= 0) vis = srow;                 /* 上界=最后一个入口行(历史/设置) */
+    else if (s_page == todo_model_page_count(&s_model) - 1) vis++;
     int next = s_cursor + dir;
     if (next < 0) {
         if (s_page > 0) {
@@ -691,8 +834,11 @@ static void flip_page(int dir)
 static void toggle_current(void)
 {
     int g = global_of(s_cursor);
-    if (g < 0 && s_page == todo_model_page_count(&s_model) - 1 &&
-        s_cursor == visible_count()) {
+    if (special_row_history() >= 0 && s_cursor == special_row_history()) {
+        show_history();
+        return;
+    }
+    if (g < 0 && s_cursor == special_row_settings()) {
         s_in_settings = true;
         if (!s_settings_scr) {
             s_settings_scr = lv_obj_create(NULL);
@@ -741,6 +887,12 @@ static void toggle_current(void)
     if (g < 0) return;
     const todo_item_t *item = todo_model_item(&s_model, g);
     todo_state_t state = todo_model_toggle(&s_model, g);
+    /* 记下完成先后(牌子无时钟);取消勾选则清掉 */
+    if (state == TODO_STATE_DONE) {
+        if (s_done_seq[g] == 0) s_done_seq[g] = ++s_done_tick;
+    } else {
+        s_done_seq[g] = 0;
+    }
     sync_row(s_cursor);
     render_progress();
     if (s_mutation_cb && item && item->id && item->id[0]) {
@@ -867,6 +1019,18 @@ void todo_app_handle_button(bsp_btn_t btn, bsp_btn_ev_t ev)
         }
         return;
     }
+    if (s_in_history) {
+        if (btn == BSP_BTN_UP && ev == BSP_BTN_PRESS) {
+            if (s_hist_page > 0) { s_hist_page--; history_fill(); }
+        } else if (btn == BSP_BTN_DOWN && ev == BSP_BTN_PRESS) {
+            s_hist_page++; history_fill();          /* fill 内会夹紧页码 */
+        } else if (btn == BSP_BTN_OK &&
+                   (ev == BSP_BTN_CLICK || ev == BSP_BTN_LONG || ev == BSP_BTN_DOUBLE)) {
+            s_in_history = false;
+            lv_screen_load(s_scr);
+        }
+        return;
+    }
     if (s_in_detail) {
         if (btn == BSP_BTN_OK && (ev == BSP_BTN_CLICK || ev == BSP_BTN_LONG)) {
             s_in_detail = false;
@@ -938,6 +1102,14 @@ void todo_app_apply_remote_tasks(const todo_app_remote_task_t *tasks, int count,
     if (s_in_detail) {   /* 清单变了:退回列表,避免详情页显示已删除/过期条目 */
         s_in_detail = false;
         lv_screen_load(s_scr);
+    }
+    if (s_in_history) {  /* 同上:历史页内容已变,退回列表 */
+        s_in_history = false;
+        lv_screen_load(s_scr);
+    }
+    s_done_tick = 0;                     /* 远程清单里的已完成任务按列表顺序记序 */
+    for (int i = 0; i < s_item_count; i++) {
+        s_done_seq[i] = (s_states[i] == TODO_STATE_DONE) ? (uint16_t)++s_done_tick : 0;
     }
     apply_page();
     render_progress();
