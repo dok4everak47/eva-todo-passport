@@ -608,9 +608,13 @@ static void build_rows(void)
         s_en_img[r] = make_image(s_scr, &todo_text_t0_en, LABEL_X, y + 20, C_YELLOW);
         s_zh_img[r] = make_image(s_scr, &todo_text_t0_zh, LABEL_X, y + 1, C_YELLOW);
         s_title_lbl[r] = make_label(s_scr, LABEL_X, y + 0, 176, &todo_font_cjk_14);
-        lv_label_set_long_mode(s_title_lbl[r], LV_LABEL_LONG_MODE_DOTS);   // 超长以 … 收尾
+        /* 高度必须钉成一行(14px 字 line_height=18):DOTS 按标签高度决定截断位置,
+           高度自适应时 LVGL 会按换行后的高度算,标签被撑高就会压到副标题行。 */
+        lv_obj_set_height(s_title_lbl[r], 18);
+        lv_label_set_long_mode(s_title_lbl[r], LV_LABEL_LONG_MODE_DOTS);
         s_note_lbl[r] = make_label(s_scr, LABEL_X, y + 17, 176, &todo_font_cjk_12);
-        lv_label_set_long_mode(s_note_lbl[r], LV_LABEL_LONG_MODE_DOTS);    // 同上
+        lv_obj_set_height(s_note_lbl[r], 16);
+        lv_label_set_long_mode(s_note_lbl[r], LV_LABEL_LONG_MODE_DOTS);
         hide(s_title_lbl[r]);
         hide(s_note_lbl[r]);
 
