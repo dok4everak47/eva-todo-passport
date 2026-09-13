@@ -608,7 +608,9 @@ static void build_rows(void)
         s_en_img[r] = make_image(s_scr, &todo_text_t0_en, LABEL_X, y + 20, C_YELLOW);
         s_zh_img[r] = make_image(s_scr, &todo_text_t0_zh, LABEL_X, y + 1, C_YELLOW);
         s_title_lbl[r] = make_label(s_scr, LABEL_X, y + 0, 176, &todo_font_cjk_14);
+        lv_label_set_long_mode(s_title_lbl[r], LV_LABEL_LONG_MODE_DOTS);   // 超长以 … 收尾
         s_note_lbl[r] = make_label(s_scr, LABEL_X, y + 17, 176, &todo_font_cjk_12);
+        lv_label_set_long_mode(s_note_lbl[r], LV_LABEL_LONG_MODE_DOTS);    // 同上
         hide(s_title_lbl[r]);
         hide(s_note_lbl[r]);
 
@@ -775,6 +777,74 @@ void todo_app_start(void)
              todo_model_total(&s_model), todo_model_page_count(&s_model));
 }
 
+
+/* ---------------------------------------------------------------------------
+ * 任务详情页:列表一行(176px)放不下的长文本,在这里整屏自动换行显示。
+ * 入口:列表页双击 OK;出口:详情页单击 OK 或长按 OK 返回。
+ * ------------------------------------------------------------------------- */
+static lv_obj_t *s_detail_scr;
+static lv_obj_t *s_detail_title;
+static lv_obj_t *s_detail_notes;
+static lv_obj_t *s_detail_meta;
+static lv_obj_t *s_detail_hint;
+static bool      s_in_detail;
+
+static void detail_fill(int g)
+{
+    const todo_item_t *item = todo_model_item(&s_model, g);
+    if (!item) return;
+    todo_state_t st = todo_model_state(&s_model, g);
+    uint32_t col = state_color(st);
+
+    lv_label_set_text(s_detail_title, (item->en && item->en[0]) ? item->en : "REMOTE TASK");
+    lv_label_set_text(s_detail_notes, (item->zh && item->zh[0]) ? item->zh : "(无副标题)");
+    lv_label_set_text(s_detail_meta,
+                      st == TODO_STATE_DONE ? "已完成 / DONE" :
+                      (st == TODO_STATE_URGENT ? "紧急 / URGENT" : "未完成 / PENDING"));
+    lv_obj_set_style_text_color(s_detail_title, lv_color_hex(col), 0);
+    lv_obj_set_style_text_color(s_detail_notes, lv_color_hex(col), 0);
+    lv_obj_set_style_text_color(s_detail_meta, lv_color_hex(col), 0);
+
+    char buf[48];
+    snprintf(buf, sizeof(buf), "第 %d/%d 条", g + 1, todo_model_total(&s_model));
+    lv_label_set_text(s_detail_hint, buf);
+}
+
+static void show_task_detail(void)
+{
+    int g = global_of(s_cursor);
+    if (g < 0) return;                              /* 光标在 SETTINGS 行或空白 */
+
+    if (!s_detail_scr) {
+        s_detail_scr = lv_obj_create(NULL);
+        lv_obj_set_style_bg_color(s_detail_scr, lv_color_hex(C_BG), 0);
+        lv_obj_set_style_bg_opa(s_detail_scr, LV_OPA_COVER, 0);
+        lv_obj_set_style_pad_all(s_detail_scr, 0, 0);
+        lv_obj_set_style_border_width(s_detail_scr, 0, 0);
+
+        panel(s_detail_scr, 0, 0, 240, 40, C_GREEN, C_GREEN, 0);
+        lv_obj_t *hdr = make_label(s_detail_scr, 10, 11, 220, &todo_font_cjk_14);
+        lv_label_set_text(hdr, "任务详情 / DETAIL");
+        lv_obj_set_style_text_color(hdr, lv_color_hex(C_BG), 0);
+
+        s_detail_meta = make_label(s_detail_scr, 10, 48, 220, &todo_font_cjk_12);
+
+        s_detail_title = make_label(s_detail_scr, 10, 76, 220, &todo_font_cjk_14);
+        lv_label_set_long_mode(s_detail_title, LV_LABEL_LONG_MODE_WRAP);
+
+        panel(s_detail_scr, 10, 176, 220, 1, C_YELLOW, C_YELLOW, 0);
+
+        s_detail_notes = make_label(s_detail_scr, 10, 188, 220, &todo_font_cjk_12);
+        lv_label_set_long_mode(s_detail_notes, LV_LABEL_LONG_MODE_WRAP);
+
+        s_detail_hint = make_label(s_detail_scr, 10, 296, 220, &todo_font_cjk_12);
+        lv_obj_set_style_text_color(s_detail_hint, lv_color_hex(C_GREEN), 0);
+    }
+    detail_fill(g);
+    s_in_detail = true;
+    lv_screen_load(s_detail_scr);
+}
+
 void todo_app_handle_button(bsp_btn_t btn, bsp_btn_ev_t ev)
 {
     if (!s_scr) return;
@@ -790,6 +860,13 @@ void todo_app_handle_button(bsp_btn_t btn, bsp_btn_ev_t ev)
             update_delete_choice();
         } else if (btn == BSP_BTN_OK && ev == BSP_BTN_CLICK) {
             close_delete_prompt(s_delete_choice_yes);
+        }
+        return;
+    }
+    if (s_in_detail) {
+        if (btn == BSP_BTN_OK && (ev == BSP_BTN_CLICK || ev == BSP_BTN_LONG)) {
+            s_in_detail = false;
+            lv_screen_load(s_scr);
         }
         return;
     }
@@ -820,6 +897,7 @@ void todo_app_handle_button(bsp_btn_t btn, bsp_btn_ev_t ev)
     case BSP_BTN_OK:
          if (ev == BSP_BTN_CLICK) toggle_current();
          else if (ev == BSP_BTN_LONG) show_delete_prompt();
+         else if (ev == BSP_BTN_DOUBLE) show_task_detail();   /* 双击看全文 */
          break;
     default:
         break;
@@ -853,6 +931,10 @@ void todo_app_apply_remote_tasks(const todo_app_remote_task_t *tasks, int count,
     s_item_count = new_count;
     todo_model_init(&s_model, s_items, s_states, s_item_count);
     s_server_version = server_version;
+    if (s_in_detail) {   /* 清单变了:退回列表,避免详情页显示已删除/过期条目 */
+        s_in_detail = false;
+        lv_screen_load(s_scr);
+    }
     apply_page();
     render_progress();
     ESP_LOGI(TAG, "remote tasks applied: %d active, server version %d",
