@@ -811,7 +811,12 @@ static void cursor_move(int dir)
             apply_page();
             return;
         }
-        next = 0;
+        /* 到顶:第一条再按 UP -> 绕到最后页的最后一行(循环) */
+        s_page = todo_model_page_count(&s_model) - 1;
+        s_cursor = cursor_max_row();
+        if (s_cursor > TODO_PAGE_SIZE - 1) s_cursor = TODO_PAGE_SIZE - 1;   /* 只落在可见行 */
+        apply_page();
+        return;
     }
     if (next >= vis) {
         if (s_page < todo_model_page_count(&s_model) - 1) {
@@ -820,7 +825,11 @@ static void cursor_move(int dir)
             apply_page();
             return;
         }
-        next = vis - 1;
+        /* 到底:最后一行再按 DOWN -> 回第一页第一行(循环) */
+        s_page = 0;
+        s_cursor = 0;
+        apply_page();
+        return;
     }
     if (next != s_cursor) {
         s_cursor = next;
