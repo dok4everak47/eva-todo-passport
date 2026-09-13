@@ -39,13 +39,13 @@
 #include <string.h>
 
 #define TAG            "todo_usb"
-#define LINE_MAX       (4096)
+#define USB_LINE_MAX       (4096)
 #define NVS_NS         "todo_tasks"
 #define NVS_KEY        "list"
 #define CHANGE_POLL_MS (1000)
 #define FW_TAG         "1.0.0-usb"
 
-static char   s_line[LINE_MAX];
+static char   s_line[USB_LINE_MAX];
 static size_t s_line_len;
 static uint32_t s_sig;
 static bool   s_ready;
@@ -174,7 +174,7 @@ static char *nvs_load(void)
     if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) return NULL;
     size_t len = 0;
     char *out = NULL;
-    if (nvs_get_str(h, NVS_KEY, NULL, &len) == ESP_OK && len > 1 && len < LINE_MAX) {
+    if (nvs_get_str(h, NVS_KEY, NULL, &len) == ESP_OK && len > 1 && len < USB_LINE_MAX) {
         out = (char *)malloc(len);
         if (out && nvs_get_str(h, NVS_KEY, out, &len) != ESP_OK) {
             free(out);
@@ -315,9 +315,9 @@ static void usb_task(void *arg)
     ESP_LOGI(TAG, "USB 任务通道就绪(#{\"cmd\":\"list\"})");
 
     for (;;) {
-        if (s_line_len < LINE_MAX - 1) {
+        if (s_line_len < USB_LINE_MAX - 1) {
             int n = usb_serial_jtag_read_bytes(s_line + s_line_len,
-                                                (uint32_t)(LINE_MAX - 1 - s_line_len),
+                                                (uint32_t)(USB_LINE_MAX - 1 - s_line_len),
                                                 pdMS_TO_TICKS(150));
             if (n > 0) {
                 s_line_len += (size_t)n;
@@ -351,6 +351,18 @@ void todo_usb_start(void)
     s_line_len = 0;
     s_line[0] = '\0';
     s_sig = 0;
+
+    // 必须自己确保 NVS 就绪:本函数在 todo_sync_start() 之前被调用,
+    // 而后者(经 todo_config_load)才会 nvs_flash_init(),否则本模块启动时
+    // nvs_open 会返回 ESP_ERR_NVS_NOT_INITIALIZED,导致清单读不回来。
+    esp_err_t nvs_err = nvs_flash_init();
+    if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        (void)nvs_flash_erase();
+        nvs_err = nvs_flash_init();
+    }
+    if (nvs_err != ESP_OK) {
+        ESP_LOGW(TAG, "nvs_flash_init 失败(%s),本次无法持久化任务", esp_err_to_name(nvs_err));
+    }
 
     if (!usb_serial_jtag_is_driver_installed()) {
         usb_serial_jtag_driver_config_t cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
