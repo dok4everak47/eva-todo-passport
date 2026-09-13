@@ -1,0 +1,10 @@
+{
+  "format": "eva-todo/import",
+  "version": 1,
+  "mode": "merge",
+  "tasks": [
+    { "title": "巡检机房", "notes": "九点前完成", "status": "todo", "urgent": false, "priority": 2 },
+    { "title": "紧急:更换备用电池", "notes": "低电量告警", "status": "todo", "urgent": true },
+    { "title": "续签证书", "status": "done", "id": "cert-2026" }
+  ]
+}

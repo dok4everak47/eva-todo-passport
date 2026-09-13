@@ -40,6 +40,10 @@ IDLE_REFRESH_FAST = 2.0
 IDLE_REFRESH_SLOW = 10.0
 PAGE_IDLE_WINDOW = 10.0
 MAX_TASKS = 12
+
+def new_task_id() -> str:
+    """网页端新建任务的 id:毫秒时间戳 + 随机后缀(避免并发/重试碰撞)。"""
+    return f"usb-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}"
 RECENT_RIDS: dict[str, tuple[float, str]] = {}   # rid -> (时间, 任务id),防重复提交
 TITLE_MAX = 63
 NOTES_MAX = 79
@@ -346,16 +350,23 @@ class Mirror:
             mutations = []
             skipped = 0
             for t in tasks:
-                mutations.append({
-                    "operation": "upsert",
-                    "task": {
-                        "id": t["id"],
-                        "title": t["title"],
-                        "notes": t["notes"],
-                        "status": t["status"],
-                        "urgent": bool(t["urgent"]),
-                    },
-                })
+                prev = remote.get(t["id"]) or {}
+                task = {
+                    "id": t["id"],
+                    "title": t["title"],
+                    "notes": t["notes"],
+                    "status": t["status"],
+                    "urgent": bool(t["urgent"]),
+                }
+                # 服务端 upsert 是「整条替换」:网页端不跟踪的字段(优先级/排序/标签/截止)
+                # 要从服务端原记录带回去,否则会被静默清空。
+                task["priority"] = int(t.get("priority", prev.get("priority") or 0) or 0)
+                if prev.get("sortOrder") is not None:
+                    task["sortOrder"] = prev["sortOrder"]
+                for k in ("tags", "dueAt"):
+                    if prev.get(k):
+                        task[k] = prev[k]
+                mutations.append({"operation": "upsert", "task": task})
             for rid in remote:
                 if rid not in local_ids:
                     if may_truncate:
@@ -443,6 +454,27 @@ button.go{border-color:var(--g);color:var(--g)}button.go:hover{background:var(--
   <div class="cnt" style="margin:6px 0 0">勾选完成会自动记入这里(任务仍留在牌子列表里)。「恢复为未完成」改回未完成;「归档」把它从牌子列表移走、记录留在这里。牌子本身没有时钟,所以牌子上只按完成先后排序,带时间戳的记录以服务端为准。</div>
   <div id="hlist"></div>
 </div>
+<div class="panel">
+  <h2>导入 JSON / IMPORT</h2>
+  <div class="row"><input type="file" id="imp-file" accept=".json,application/json" style="flex:1;min-width:150px">
+  <button id="imp-preview">预览</button></div>
+  <div class="msg" id="imp-msg"></div>
+  <button id="imp-go" class="go" style="display:none">确认导入</button>
+  <details style="margin-top:10px"><summary class="cnt" style="cursor:pointer">格式说明 / 示例（点击展开）</summary>
+  <pre class="cnt" style="white-space:pre-wrap;margin:6px 0 0">{
+  "format": "eva-todo/import",     // 可省略
+  "version": 1,                    // 可省略
+  "mode": "merge",                 // merge(默认)=追加/按 id 更新;replace=替换整份清单
+  "tasks": [
+    { "title": "巡检机房", "notes": "九点前完成", "status": "todo", "urgent": false, "priority": 2 },
+    { "title": "续签证书", "status": "done", "id": "cert-2026" }
+  ]
+}
+顶层也可以直接是数组: [ {...}, {...} ]
+字段: title 必填(≤63 字节) / notes 可选(≤79 字节) / status: todo 或 done /
+      urgent: true 时牌子上变红 / priority: 0-3(仅服务端记着,牌子不显示) /
+      id: 可选;给了就按 id 更新,同一文件重复导入不会产生重复任务</pre></details>
+</div>
 <script>
 const $=id=>document.getElementById(id);let state={tasks:[]},editing=null,lastSig='';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -526,6 +558,36 @@ $('h-archive-done').onclick=async()=>{
 function histButton(){const b=$('h-archive-done');if(!b)return;const n=histTasks.filter(x=>x.canRestore).length;
  b.disabled=(n===0);b.textContent=n?`一键归档已完成 (${n})`:'一键归档已完成';}
 $('h-search').oninput=()=>histRender();
+let impBuf=null;
+function impMsg(html,bad){const m=$('imp-msg');m.className='msg'+(bad?' bad':'');m.innerHTML=html;}
+$('imp-preview').onclick=async()=>{
+ const f=$('imp-file').files[0];if(!f){impMsg('先选一个 .json 文件',true);return}
+ try{
+  const j=JSON.parse(await f.text());
+  const arr=Array.isArray(j)?j:(j.tasks||[]);
+  const mode=(Array.isArray(j)?'merge':String(j.mode||'merge')).toLowerCase();
+  if(mode!=='merge'&&mode!=='replace')throw Error('mode 只能是 merge 或 replace');
+  if(!Array.isArray(arr)||!arr.length)throw Error('没有 tasks 数组或为空');
+  const cur=state.tasks||[],ids=new Set(cur.map(t=>t.id));
+  const upd=arr.filter(x=>x&&x.id&&ids.has(x.id)).length,add=arr.length-upd;
+  const total=(mode==='replace'?arr.length:cur.length+add);
+  impBuf={mode,tasks:arr};
+  impMsg(`文件 <b>${esc(f.name)}</b> · 模式 <b>${mode}</b> · ${arr.length} 条`+
+   `（新增 ${add}${upd?` / 按 id 更新 ${upd}`:''}）→ 导入后 <b>${total}</b> 条`+
+   (total>12?' <span class="bad">超过上限 12,会被拒绝</span>':''));
+  $('imp-go').style.display='';$('imp-go').disabled=(total>12);
+  $('imp-go').textContent=`确认导入 ${arr.length} 条`;
+ }catch(e){impBuf=null;$('imp-go').style.display='none';impMsg('JSON 有问题:'+esc(e.message),true)}
+};
+$('imp-go').onclick=async()=>{if(!impBuf)return;
+ $('imp-go').disabled=true;
+ try{const j=await api('/api/import',{method:'POST',body:JSON.stringify(impBuf)});
+  impMsg(`已导入:模式 ${j.mode} · 新增 ${j.added} · 更新 ${j.updated}`+
+   (j.skipped?` · 跳过 ${j.skipped}(${(j.skipped_reasons||[]).join(';')})`:'')+
+   ` · 共 ${j.total} 条 · 镜像 ${esc(j.mirror||'-')}`);
+  impBuf=null;$('imp-go').style.display='none';$('imp-file').value='';await poll();histLoad();
+ }catch(e){impMsg(esc(e.message),true)}finally{$('imp-go').disabled=false}
+};
 document.addEventListener('click',e=>{const b=e.target.closest('button[data-hist]');
  if(b)histAct(b.dataset.hist,b.dataset.id)});
 async function act(act,id,payload){try{
@@ -578,6 +640,71 @@ class Handler(BaseHTTPRequestHandler):
             return json.loads(raw.decode("utf-8")) if raw else {}
         except (ValueError, json.JSONDecodeError):
             return {}
+
+    def _import(self, data):
+        """导入 JSON。格式:{format,version,mode,tasks} 或裸数组(见 README /sample-import.json)。
+        mode=merge(默认):保留现有,tasks 追加;带 id 且已存在则按 id 更新。
+        mode=replace:整份清单替换为 tasks。"""
+        if isinstance(data, list):
+            payload = {"tasks": data}
+        elif isinstance(data, dict):
+            payload = data
+        else:
+            return self._json({"ok": False, "error": "JSON 顶层必须是对象或数组"}, 400)
+        mode = str(payload.get("mode") or "merge").strip().lower()
+        if mode not in ("merge", "replace"):
+            return self._json({"ok": False, "error": "mode 只能是 merge 或 replace"}, 400)
+        raw = payload.get("tasks")
+        if not isinstance(raw, list) or not raw:
+            return self._json({"ok": False, "error": "tasks 必须是非空数组"}, 400)
+
+        cur = list(self.device.snapshot()["tasks"])
+        pos = {t["id"]: i for i, t in enumerate(cur)}
+        result = list(cur) if mode == "merge" else []
+        added = updated = skipped = 0
+        reasons = []
+        for k, item in enumerate(raw):
+            if not isinstance(item, dict):
+                skipped += 1; reasons.append(f"第{k + 1}项不是对象"); continue
+            title = self._clean(item.get("title") or item.get("name") or item.get("text"), TITLE_MAX)
+            if not title:
+                skipped += 1; reasons.append(f"第{k + 1}项缺标题"); continue
+            notes = self._clean(item.get("notes") or item.get("desc")
+                                or item.get("description") or item.get("detail"), NOTES_MAX)
+            st = str(item.get("status") or item.get("state") or "todo").strip().lower()
+            task = {
+                "id": str(item.get("id") or "").strip() or new_task_id(),
+                "title": title,
+                "notes": notes,
+                "status": "done" if st in ("done", "completed", "complete", "finished", "已完成") else "todo",
+                "urgent": bool(item.get("urgent")),
+            }
+            if item.get("priority") is not None:
+                try:
+                    task["priority"] = max(0, min(3, int(item["priority"])))
+                except (TypeError, ValueError):
+                    pass
+            if mode == "merge" and task["id"] in pos:
+                result[pos[task["id"]]] = task; updated += 1
+            else:
+                hit = next((i for i, t in enumerate(result) if t["id"] == task["id"]), None)
+                if hit is None:
+                    result.append(task); added += 1
+                else:
+                    result[hit] = task; updated += 1
+
+        if len(result) > MAX_TASKS:
+            return self._json({"ok": False, "error": (
+                f"导入后会有 {len(result)} 条,超过设备上限 {MAX_TASKS} 条"
+                f"(现有 {len(cur)} 条 + 文件 {len(raw)} 条);请先归档/删除,或用 replace 模式")}, 400)
+
+        ok, err = self.device.push_tasks(result)
+        if not ok:
+            return self._json({"ok": False, "error": err}, 409)
+        self.mirror.sync(result)
+        return self._json({"ok": True, "mode": mode, "added": added, "updated": updated,
+                           "skipped": skipped, "skipped_reasons": reasons[:5],
+                           "total": len(result), "mirror": self.mirror.status, "tasks": result})
 
     def _clean(self, s: str, limit: int) -> str:
         t = re.sub(r"[\r\n\t]+", " ", str(s or "")).strip()
@@ -632,7 +759,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"ok": True, "dup": True, "id": prev_id,
                                        "tasks": self.device.snapshot()["tasks"], "mirror": self.mirror.status})
                 RECENT_RIDS.pop(rid, None)      # 上次没落地(设备离线等):允许重试
-            new_id = f"usb-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}"   # 随机后缀,杜绝碰撞
+            new_id = new_task_id()
             if rid:
                 RECENT_RIDS[rid] = (time.time(), new_id)
                 for k in [k for k, v in RECENT_RIDS.items() if time.time() - v[0] > 60]:
@@ -667,6 +794,8 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 hist = []
             return self._json({"ok": True, "tasks": hist, "count": len(hist)})
+        if self.path == "/api/import":
+            return self._import(self._body())
         if self.path == "/api/refresh":
             self.device.send({"cmd": "list"})
             return self._json({"ok": True})
