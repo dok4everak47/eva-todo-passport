@@ -33,6 +33,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 VERSION = "1.0.0"
 DEFAULT_HTTP_PORT = 8899
+# 空闲时自动向设备催一次清单的间隔(秒):页面正在轮询时用 FAST(准实时补拉,
+# 兜住设备上报偶发丢行);页面没打开时退回 SLOW,避免无人看时也空转。
+IDLE_REFRESH_FAST = 2.0
+IDLE_REFRESH_SLOW = 10.0
+PAGE_IDLE_WINDOW = 10.0
 MAX_TASKS = 12
 TITLE_MAX = 63
 NOTES_MAX = 79
@@ -55,6 +60,7 @@ class Device:
         self.done = 0
         self.server_version = 0
         self.last_seen = 0.0
+        self.last_page = 0.0
         self.last_error = ""
         self.tasks: list[dict] = []
         self._buf = bytearray()
@@ -190,8 +196,11 @@ class Device:
                     if len(self._buf) > 65536:
                         self._buf.clear()
                 else:
-                    # 长时间无数据也定期催一次清单,兼作探测
-                    if time.time() - self.last_seen > 10:
+                    # 空闲时定期催一次清单:兼作探测与"补拉"(设备上报偶尔会丢行)。
+                    # 页面在轮询 /api/state 时按准实时节奏,页面关掉后退回慢节奏。
+                    page_active = (time.time() - self.last_page) < PAGE_IDLE_WINDOW
+                    interval = IDLE_REFRESH_FAST if page_active else IDLE_REFRESH_SLOW
+                    if time.time() - self.last_seen > interval:
                         self.send({"cmd": "list"})
             except OSError as exc:
                 self.last_error = f"串口异常: {exc}"
@@ -270,7 +279,7 @@ class Mirror:
                     mutations.append({"operation": "delete", "task": {"id": rid}})
             self._req("POST", "/sync", {"deviceId": "usb-web", "localVersion": 0, "mutations": mutations})
             self.status = f"已同步({len(mutations)} 项)"
-        except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError) as exc:
+        except Exception as exc:          # 镜像失败绝不能影响用户请求
             self.status = f"跳过({type(exc).__name__})"
 
 
@@ -417,6 +426,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
         elif self.path == "/api/state":
+            self.device.last_page = time.time()     # 页面在轮询 => 启用准实时补拉
             snap = self.device.snapshot()
             snap["mirror"] = self.mirror.status
             self._json(snap)
@@ -483,9 +493,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def _push(self, tasks: list[dict]):
         ok, err = self.device.push_tasks(tasks)
-        self.mirror.sync(tasks)
         if not ok:
+            # 关键安全点:只有确实下发到设备成功后才镜像到 Go 服务。
+            # 设备离线时镜像会用一份"凭空拼出来的本地清单"去覆盖服务器(会误删任务)。
+            self.mirror.status = "未镜像(设备未连接)"
             return self._json({"ok": False, "error": err}, 409)
+        self.mirror.sync(tasks)
         self._json({"ok": True, "tasks": tasks, "mirror": self.mirror.status})
 
 
