@@ -8,8 +8,8 @@
 
 #define TODO_APP_MAX_TASKS 12
 #define TODO_APP_ID_LEN 64
-#define TODO_APP_TITLE_LEN 64
-#define TODO_APP_NOTE_LEN 80
+#define TODO_APP_TITLE_LEN 80
+#define TODO_APP_NOTE_LEN 150
 
 typedef struct {
     char id[TODO_APP_ID_LEN];

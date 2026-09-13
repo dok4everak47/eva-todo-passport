@@ -39,7 +39,7 @@
 #include <string.h>
 
 #define TAG            "todo_usb"
-#define USB_LINE_MAX       (4096)
+#define USB_LINE_MAX       (6144)
 #define NVS_NS         "todo_tasks"
 #define NVS_KEY        "list"
 #define CHANGE_POLL_MS (1000)
