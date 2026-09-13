@@ -53,3 +53,4 @@ skills/folotoy-ai-passport-publisher/
 usb-web/__pycache__/
 server-go/data/
 server-go/eva-todo-server
+.cache/
