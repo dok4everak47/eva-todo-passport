@@ -5,6 +5,7 @@
 #include "bsp_pins.h"   // 错误日志里要打印 BSP_LCD_* 引脚号
 #include "todo_app.h"
 #include "todo_sync.h"
+#include "todo_usb.h"
 #include "esp_log.h"
 
 static const char *TAG = "main";
@@ -37,6 +38,7 @@ void app_main(void)
         todo_app_start();
         bsp_lvgl_unlock();
     }
+    todo_usb_start();     // USB 串口任务通道(内部自行加 LVGL 锁)
     todo_sync_start();
 
     ESP_LOGI(TAG, "就绪:Button=%d", button_ok ? 1 : 0);

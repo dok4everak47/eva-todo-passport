@@ -865,3 +865,21 @@ void todo_app_get_report(int *task_total, int *task_done, int *server_version)
     if (task_done) *task_done = todo_model_done_count(&s_model);
     if (server_version) *server_version = s_server_version;
 }
+
+int todo_app_export_tasks(todo_app_remote_task_t *out, int max_count)
+{
+    if (!out || max_count <= 0) return 0;
+    int n = s_item_count < max_count ? s_item_count : max_count;
+    for (int i = 0; i < n; i++) {
+        memset(&out[i], 0, sizeof(out[i]));
+        copy_trunc(out[i].id, sizeof(out[i].id), s_ids[i]);
+        copy_trunc(out[i].title, sizeof(out[i].title), s_titles[i]);
+        copy_trunc(out[i].notes, sizeof(out[i].notes), s_notes[i]);
+        out[i].state = (todo_state_t)s_states[i];
+        out[i].urgent = (out[i].state == TODO_STATE_URGENT);
+        out[i].deleted = false;
+        out[i].version = s_server_version;
+        out[i].sort_order = i;
+    }
+    return n;
+}

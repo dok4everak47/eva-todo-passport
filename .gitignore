@@ -47,3 +47,9 @@ docs/preview_*.png.fap-capture.json
 
 # Local-only publisher installation
 skills/folotoy-ai-passport-publisher/
+
+# --- 本地(USB 网页端/救砖材料/服务数据) ---
+.device-backup/
+usb-web/__pycache__/
+server-go/data/
+server-go/eva-todo-server

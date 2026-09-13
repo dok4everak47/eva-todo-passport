@@ -42,3 +42,7 @@ void todo_app_apply_remote_tasks(const todo_app_remote_task_t *tasks, int count,
 
 // 同步模块上报状态用。调用方最好持有 LVGL 锁或在 UI 空闲时调用。
 void todo_app_get_report(int *task_total, int *task_done, int *server_version);
+
+// 只读导出当前任务清单(供 USB 串口通道等外部通道读取)。
+// 调用方须持有 LVGL 锁(与 apply_remote_tasks 同一把)。返回写入的条目数。
+int todo_app_export_tasks(todo_app_remote_task_t *out, int max_count);

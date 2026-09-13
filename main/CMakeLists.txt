@@ -8,6 +8,7 @@ idf_component_register(
          "todo_font_cjk_12.c"
          "todo_font_cjk_14.c"
          "todo_text_assets.c"
+         "todo_usb.c"
     INCLUDE_DIRS "."
-    REQUIRES bsp esp_wifi esp_event esp_http_client esp-tls esp_http_server nvs_flash json esp_timer
+    REQUIRES bsp esp_wifi esp_event esp_http_client esp-tls esp_http_server nvs_flash json esp_timer esp_driver_usb_serial_jtag
 )
