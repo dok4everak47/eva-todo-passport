@@ -136,6 +136,7 @@ static void render_progress(void);
 static void render_settings_page(void);
 static void show_delete_prompt(void);
 static void close_delete_prompt(bool confirm);
+static int cursor_max_row(void);
 
 static void copy_trunc(char *dst, size_t dst_size, const char *src)
 {
@@ -411,7 +412,7 @@ static void close_delete_prompt(bool confirm)
             s_items[i].state = (todo_state_t)s_states[i];
         }
         todo_model_init(&s_model, s_items, s_states, s_item_count);
-        if (s_cursor >= visible_count() + ((s_page == todo_model_page_count(&s_model) - 1) ? 1 : 0)) {
+        if (s_cursor > cursor_max_row()) {      /* 同一口径:入口行也算可达 */
             s_cursor = visible_count() > 0 ? visible_count() - 1 : 0;
         }
         apply_page();
@@ -452,6 +453,16 @@ static int special_row_settings(void)
     int vc = visible_count();
     if (vc + 2 <= TODO_PAGE_SIZE) return vc + 1;      /* 历史 + 设置都在 */
     return vc;                                        /* 只剩一行:设置(与原行为一致) */
+}
+
+/* 光标可停留的最大行号。入口行(历史/设置)也算可达:
+   此前 cursor_move/apply_page 各算一份且都只 +1,导致"设置"行被排除、无法移入。 */
+static int cursor_max_row(void)
+{
+    int srow = special_row_settings();
+    if (srow >= 0) return srow;                       /* 入口行即最大行 */
+    if (s_page == todo_model_page_count(&s_model) - 1) return visible_count();
+    return visible_count() - 1;
 }
 
 #define HIST_ROWS 6
@@ -677,8 +688,7 @@ static void apply_page(void)
     int pages = todo_model_page_count(&s_model);
     if (s_page < 0) s_page = 0;
     if (s_page >= pages) s_page = pages - 1;
-    int cursor_limit = visible_count();
-    if (s_page == pages - 1) cursor_limit++;
+    int cursor_limit = cursor_max_row() + 1;   /* 与 cursor_move 同一口径 */
     if (s_cursor >= cursor_limit) s_cursor = cursor_limit - 1;
     if (s_cursor < 0) s_cursor = 0;
 
@@ -792,10 +802,7 @@ static void build_nav(void)
 
 static void cursor_move(int dir)
 {
-    int vis = visible_count();
-    int srow = special_row_settings();
-    if (srow >= 0) vis = srow;                 /* 上界=最后一个入口行(历史/设置) */
-    else if (s_page == todo_model_page_count(&s_model) - 1) vis++;
+    int vis = cursor_max_row() + 1;            /* vis = 有效行数(最大行号 + 1) */
     int next = s_cursor + dir;
     if (next < 0) {
         if (s_page > 0) {
