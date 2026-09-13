@@ -64,6 +64,7 @@ class Device:
         self.last_error = ""
         self.tasks: list[dict] = []
         self._buf = bytearray()
+        self.synced = False        # 是否已从设备读到过清单(未读到前禁止写入,防止整表替换把任务抹掉)
         self._wlock = threading.Lock()
         self._lock = threading.Lock()
         self._stop = False
@@ -118,6 +119,7 @@ class Device:
         self.fd = None
         self.connected = False
         self.port = None
+        self.synced = False
 
     def _open(self, port: str) -> bool:
         try:
@@ -132,6 +134,7 @@ class Device:
         self.fd = fd
         self.port = port
         self.connected = True
+        self.synced = False        # 重连后需重新读到清单才允许写入
         self.last_seen = time.time()
         self.last_error = ""
         self._buf.clear()
@@ -165,6 +168,7 @@ class Device:
                         "urgent": bool(t.get("urgent")),
                     })
                 self.tasks = tasks[:MAX_TASKS]
+                self.synced = True
                 self.total = int(msg.get("total", len(self.tasks)) or 0)
                 self.done = int(msg.get("done", 0) or 0)
                 self.server_version = int(msg.get("serverVersion", self.server_version) or 0)
@@ -214,6 +218,8 @@ class Device:
             self.tasks = tasks[:MAX_TASKS]
         if not self.connected:
             return False, "设备未连接,无法下发"
+        if not self.synced:
+            return False, "尚未读到设备上的清单,已拒绝写入(请稍候或点\"从设备刷新\")"
         ok = self.send({"cmd": "set", "tasks": self.tasks})
         return ok, ("" if ok else (self.last_error or "下发失败"))
 
@@ -343,13 +349,15 @@ button.go{border-color:var(--g);color:var(--g)}button.go:hover{background:var(--
   <div id="list"></div>
 </div>
 <script>
-const $=id=>document.getElementById(id);let state={tasks:[]},editing=null;
+const $=id=>document.getElementById(id);let state={tasks:[]},editing=null,lastSig='';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function say(t,bad){const m=$('msg');m.textContent=t;m.className='msg'+(bad?' bad':'')}
 async function api(path,opt={}){const r=await fetch(path,{headers:{'content-type':'application/json'},...opt});
  const j=await r.json().catch(()=>({}));if(!r.ok||j.ok===false)throw Error(j.error||r.statusText);return j}
 function fmt(ts){return ts?new Date(ts*1000).toLocaleTimeString('zh-CN',{hour12:false}):'-'}
-function render(){const t=state.tasks||[];$('list').innerHTML=t.length?t.map((x,i)=>{
+function render(){const t=state.tasks||[];
+ const sig=JSON.stringify(t)+'|'+editing;if(sig===lastSig)return;lastSig=sig;   // 关键:避免定时轮询抹掉正在输入的内容
+ $('list').innerHTML=t.length?t.map((x,i)=>{
  const cls=x.status==='done'?'done':(x.urgent?'urgent':'');
  if(editing===x.id){return `<div class="task ${cls}"><div class="ed">
    <input id="e-t" value="${esc(x.title)}" maxlength="63">
@@ -367,7 +375,10 @@ async function poll(){try{const j=await api('/api/state');state=j;
  $('s-link').className=j.connected?'ok':'bad';$('s-fw').textContent=j.firmware||'-';
  $('s-prog').textContent=j.total?`${j.done}/${j.total} 已完成`:'-';
  $('s-mirror').textContent=j.mirror||'-';
- $('s-seen').textContent=fmt(j.lastSeen);render()}catch(e){$('s-link').textContent='服务异常';$('s-link').className='bad'}}
+ $('s-seen').textContent=fmt(j.lastSeen);
+ if(editing&&!state.tasks.some(t=>t.id===editing)){editing=null;lastSig='';}   // 编辑中的任务被删掉了
+ if(!editing)render();                                                         // 编辑中保持 DOM 不动
+}catch(e){$('s-link').textContent='服务异常';$('s-link').className='bad'}}
 async function act(act,id,payload){try{
  if(act==='toggle'){const t=state.tasks.find(x=>x.id===id);await api('/api/tasks/'+encodeURIComponent(id),{method:'PATCH',body:JSON.stringify({status:t.status==='done'?'todo':'done'})})}
  if(act==='del'&&confirm('删除这条任务?'))await api('/api/tasks/'+encodeURIComponent(id),{method:'DELETE'})
@@ -422,6 +433,7 @@ class Handler(BaseHTTPRequestHandler):
             body = PAGE.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")     # 便于修完 bug 后普通刷新即可生效
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
