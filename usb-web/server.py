@@ -433,7 +433,7 @@ button.go{border-color:var(--g);color:var(--g)}button.go:hover{background:var(--
 <div class="panel">
   <h2>新增任务 / ADD</h2>
   <label>主标题<span class="cnt" id="n-title-info"></span></label>
-  <input id="n-title" maxlength="149" placeholder="SHORT TITLE">
+  <input id="n-title" maxlength="79" placeholder="SHORT TITLE">
   <label>副标题 / 中文详情<span class="cnt" id="n-notes-info"></span></label>
   <textarea id="n-notes" maxlength="149" placeholder="中文详情"></textarea>
   <div class="cnt" style="margin:6px 0 0">设备屏幕一行只有 176px:主标题约 12 个汉字、副标题约 14 个汉字;超出部分会被截断。</div>
@@ -491,7 +491,7 @@ function render(){const t=state.tasks||[];
  const cls=x.status==='done'?'done':(x.urgent?'urgent':'');
  if(editing===x.id){return `<div class="task ${cls}"><div class="ed">
    <label style="margin:0">主标题<span class="cnt" id="e-t-info"></span></label>
-   <input id="e-t" value="${esc(x.title)}" maxlength="149">
+   <input id="e-t" value="${esc(x.title)}" maxlength="79">
    <label style="margin:0">副标题<span class="cnt" id="e-n-info"></span></label>
    <textarea id="e-n" maxlength="149">${esc(x.notes)}</textarea>
    <label style="margin:0"><input type="checkbox" id="e-u" ${x.urgent?'checked':''} style="width:auto"> 紧急</label>
