@@ -321,6 +321,8 @@ button.go{border-color:var(--g);color:var(--g)}button.go:hover{background:var(--
 .meta{font-size:11px;color:var(--dim);margin-top:4px;letter-spacing:.5px}
 .empty{color:var(--dim);padding:8px 0}
 .msg{min-height:18px;font-size:12px;margin-top:8px;color:var(--dim)}
+.cnt{font-size:11px;color:var(--dim);margin-left:8px;font-weight:400}
+.cnt.bad{color:var(--r)}
 .msg.bad{color:var(--r)}
 .ed{display:grid;gap:6px;width:100%}
 </style></head><body>
@@ -335,10 +337,11 @@ button.go{border-color:var(--g);color:var(--g)}button.go:hover{background:var(--
 </div>
 <div class="panel">
   <h2>新增任务 / ADD</h2>
-  <label>主标题(建议英文大写,显示在任务行上方)</label>
+  <label>主标题<span class="cnt" id="n-title-info"></span></label>
   <input id="n-title" maxlength="63" placeholder="SHORT TITLE">
-  <label>副标题 / 中文详情(显示在主标题下方,支持中文)</label>
+  <label>副标题 / 中文详情<span class="cnt" id="n-notes-info"></span></label>
   <textarea id="n-notes" maxlength="79" placeholder="中文详情"></textarea>
+  <div class="cnt" style="margin:6px 0 0">设备屏幕一行只有 176px:主标题约 12 个汉字、副标题约 14 个汉字;超出部分会被截断。</div>
   <div class="row"><label style="margin:0"><input type="checkbox" id="n-urgent" style="width:auto"> 紧急(红色警示)</label>
   <button id="add" class="go">ADD TASK</button></div>
   <div class="msg" id="msg"></div>
@@ -360,7 +363,9 @@ function render(){const t=state.tasks||[];
  $('list').innerHTML=t.length?t.map((x,i)=>{
  const cls=x.status==='done'?'done':(x.urgent?'urgent':'');
  if(editing===x.id){return `<div class="task ${cls}"><div class="ed">
+   <label style="margin:0">主标题<span class="cnt" id="e-t-info"></span></label>
    <input id="e-t" value="${esc(x.title)}" maxlength="63">
+   <label style="margin:0">副标题<span class="cnt" id="e-n-info"></span></label>
    <textarea id="e-n" maxlength="79">${esc(x.notes)}</textarea>
    <label style="margin:0"><input type="checkbox" id="e-u" ${x.urgent?'checked':''} style="width:auto"> 紧急</label>
    <div class="row"><button class="go" data-ed-save="${esc(x.id)}">保存</button><button data-ed-cancel="1">取消</button></div></div></div>`}
@@ -370,14 +375,26 @@ function render(){const t=state.tasks||[];
    <button data-act="toggle" data-id="${esc(x.id)}">${x.status==='done'?'重开':'完成'}</button>
    <button data-act="edit" data-id="${esc(x.id)}">编辑</button>
    <button class="danger" data-act="del" data-id="${esc(x.id)}">删除</button></div></div>`}).join(''):'<div class="empty">设备上没有任务</div>'}
+const FONT={title:{wide:14,narrow:7},notes:{wide:12,narrow:6}},LABEL_W=176;
+function textPx(s,kind){let px=0;for(const ch of String(s||''))px+=(ch.codePointAt(0)>0x2e80)?FONT[kind].wide:FONT[kind].narrow;return px}
+function updateCnt(inputId,infoId,kind){const el=$(inputId),info=$(infoId);if(!el||!info)return;
+ const px=textPx(el.value,kind),pct=Math.round(px/LABEL_W*100),fit=Math.floor(LABEL_W/FONT[kind].wide);
+ info.textContent=`屏幕宽度 ${pct}% · 单行上限约 ${fit} 个汉字`+(px>LABEL_W?' · 超出部分会被截断':'');
+ info.className='cnt'+(px>LABEL_W?' bad':'');}
+document.addEventListener('input',e=>{const id=e.target.id;
+ if(id==='n-title')updateCnt('n-title','n-title-info','title');
+ else if(id==='n-notes')updateCnt('n-notes','n-notes-info','notes');
+ else if(id==='e-t')updateCnt('e-t','e-t-info','title');
+ else if(id==='e-n')updateCnt('e-n','e-n-info','notes');});
 async function poll(){try{const j=await api('/api/state');state=j;
  $('s-port').textContent=j.port||'未检测到';$('s-link').textContent=j.connected?'已连接':'未连接';
  $('s-link').className=j.connected?'ok':'bad';$('s-fw').textContent=j.firmware||'-';
  $('s-prog').textContent=j.total?`${j.done}/${j.total} 已完成`:'-';
  $('s-mirror').textContent=j.mirror||'-';
  $('s-seen').textContent=fmt(j.lastSeen);
+ if(!editing){render();}                                                       // 编辑中保持 DOM 不动
+ refreshEditCnt();
  if(editing&&!state.tasks.some(t=>t.id===editing)){editing=null;lastSig='';}   // 编辑中的任务被删掉了
- if(!editing)render();                                                         // 编辑中保持 DOM 不动
 }catch(e){$('s-link').textContent='服务异常';$('s-link').className='bad'}}
 async function act(act,id,payload){try{
  if(act==='toggle'){const t=state.tasks.find(x=>x.id===id);await api('/api/tasks/'+encodeURIComponent(id),{method:'PATCH',body:JSON.stringify({status:t.status==='done'?'todo':'done'})})}
@@ -390,10 +407,12 @@ $('add').onclick=async()=>{try{if(!$('n-title').value.trim())throw Error('主标
  await api('/api/tasks',{method:'POST',body:JSON.stringify({title:$('n-title').value,notes:$('n-notes').value,urgent:$('n-urgent').checked})});
  $('n-title').value='';$('n-notes').value='';$('n-urgent').checked=false;say('已下发到设备');await poll()}catch(e){say(e.message,true)}};
 $('refresh').onclick=async()=>{try{await api('/api/refresh',{method:'POST'});say('已请求设备清单');await poll()}catch(e){say(e.message,true)}};
+function refreshEditCnt(){if(editing){updateCnt('e-t','e-t-info','title');updateCnt('e-n','e-n-info','notes');}}
 document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
  if(b.dataset.act)return act(b.dataset.act,b.dataset.id);
  if(b.dataset.edSave)return act('ed-save',b.dataset.edSave);
  if(b.dataset.edCancel)return act('ed-cancel')});
+updateCnt('n-title','n-title-info','title');updateCnt('n-notes','n-notes-info','notes');
 poll();setInterval(poll,1500);
 </script></body></html>
 """
