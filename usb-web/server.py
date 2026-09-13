@@ -312,6 +312,23 @@ class Mirror:
         except Exception as exc:
             return False, f"服务端不可达({type(exc).__name__})"
 
+    def archive_done(self) -> tuple[int, int, str]:
+        """一键归档:把服务端所有"已完成且未归档"的任务标记归档。
+        返回 (成功数, 失败数, 错误)。归档会让设备下次同步时把它们移出牌子列表,记录留在历史里。"""
+        if not self.token:
+            return 0, 0, "没有 ADMIN_TOKEN"
+        cur = self._req("GET", "/tasks?includeDeleted=1", timeout=4.0) or {}
+        done, fails = 0, 0
+        for t in (cur.get("tasks") or []):
+            if str(t.get("status")) != "done":
+                continue
+            try:
+                self._req("DELETE", "/tasks/" + urllib.parse.quote(str(t.get("id")), safe=""))
+                done += 1
+            except Exception:
+                fails += 1
+        return done, fails, ("" if not fails else f"{fails} 条归档失败")
+
     def sync(self, tasks: list[dict]) -> None:
         """把当前清单镜像到 Go 服务:/sync 的 upsert 保留我们的 id,缺失的 delete。"""
         if not self.enabled:
@@ -421,6 +438,7 @@ button.go{border-color:var(--g);color:var(--g)}button.go:hover{background:var(--
 <div class="panel">
   <h2>历史记录 / HISTORY <span class="cnt" id="h-count"></span></h2>
   <div class="row"><button id="h-refresh">刷新历史</button>
+  <button id="h-archive-done" disabled>一键归档已完成</button>
   <input id="h-search" placeholder="搜索已完成的记录" style="flex:1;min-width:120px"></div>
   <div class="cnt" style="margin:6px 0 0">勾选完成会自动记入这里(任务仍留在牌子列表里)。「恢复为未完成」改回未完成;「归档」把它从牌子列表移走、记录留在这里。牌子本身没有时钟,所以牌子上只按完成先后排序,带时间戳的记录以服务端为准。</div>
   <div id="hlist"></div>
@@ -487,7 +505,7 @@ function histRender(){const box=$('hlist');if(!box)return;
    <button class="danger" data-hist="delete" data-id="${esc(x.id)}">归档(移出牌子)</button>`:''}</div></div>`).join('')
  :'<div class="empty">没有匹配的历史记录</div>';}
 async function histLoad(){try{const j=await api('/api/history');histTasks=j.tasks||[];
- $('h-count').textContent=(j.ok===false?('不可用'):(j.count||0)+' 条');histRender();}
+ $('h-count').textContent=(j.ok===false?('不可用'):(j.count||0)+' 条');histRender();histButton();}
  catch(e){$('hlist').innerHTML='<div class="empty">历史加载失败</div>'}}
 async function histAct(op,id){try{
  if(op==='delete'&&!confirm('把这条从牌子列表移走并归档?(历史记录里仍可查)'))return;
@@ -496,6 +514,17 @@ async function histAct(op,id){try{
  say(op==='restore'?'已恢复为未完成':'已归档');await poll();
 }catch(e){say(e.message,true)}}
 $('h-refresh').onclick=()=>histLoad();
+$('h-archive-done').onclick=async()=>{
+ const n=histTasks.filter(x=>x.canRestore).length;          // canRestore=未归档(即牌子上还有的已完成)
+ if(!n)return say('没有可归档的已完成任务');
+ if(!confirm(`把 ${n} 条已完成归档?\n它们会从牌子列表移走、腾出名额,记录保留在历史里。`))return;
+ const b=$('h-archive-done');b.disabled=true;
+ try{const j=await api('/api/history/batch',{method:'POST',body:JSON.stringify({op:'archive-done'})});
+  histTasks=j.tasks||[];histRender();$('h-count').textContent=(j.count||0)+' 条';
+  say(`已归档 ${j.archived||0} 条`+(j.error?(' · '+j.error):''), !!j.error);await poll();
+ }catch(e){say(e.message,true)}finally{b.disabled=false;histButton();}};
+function histButton(){const b=$('h-archive-done');if(!b)return;const n=histTasks.filter(x=>x.canRestore).length;
+ b.disabled=(n===0);b.textContent=n?`一键归档已完成 (${n})`:'一键归档已完成';}
 $('h-search').oninput=()=>histRender();
 document.addEventListener('click',e=>{const b=e.target.closest('button[data-hist]');
  if(b)histAct(b.dataset.hist,b.dataset.id)});
@@ -616,6 +645,17 @@ class Handler(BaseHTTPRequestHandler):
                 "urgent": bool(data.get("urgent")),
             })
             return self._push(tasks)
+        if self.path == "/api/history/batch":
+            data = self._body()
+            if str(data.get("op") or "") != "archive-done":
+                return self._json({"ok": False, "error": "未知操作"}, 400)
+            done, fails, err = self.mirror.archive_done()
+            try:
+                hist = self.mirror.fetch_history()
+            except Exception:
+                hist = []
+            return self._json({"ok": not err, "archived": done, "error": err,
+                               "tasks": hist, "count": len(hist)})
         if self.path.startswith("/api/history/"):
             tid = urllib.parse.unquote(self.path[len("/api/history/"):])
             data = self._body()
