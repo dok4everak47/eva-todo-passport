@@ -465,6 +465,19 @@ static int cursor_max_row(void)
     return visible_count() - 1;
 }
 
+/* 光标所在行的副标题自动来回滚动,其余行仍以 … 截断。
+   牌子上副标题一行只有 176px(约 14 个汉字),长副标题只有滚动才能读全;
+   只让选中行滚动,其他行保持安静(也不额外消耗重绘)。 */
+static void sync_note_scroll(void)
+{
+    for (int r = 0; r < TODO_PAGE_SIZE; r++) {
+        if (!s_note_lbl[r]) continue;
+        bool focus = (r == s_cursor) && (global_of(r) >= 0);
+        lv_label_set_long_mode(s_note_lbl[r],
+                               focus ? LV_LABEL_LONG_MODE_SCROLL : LV_LABEL_LONG_MODE_DOTS);
+    }
+}
+
 #define HIST_ROWS 6
 static lv_obj_t *s_hist_scr;
 static lv_obj_t *s_hist_mark[HIST_ROWS];
@@ -569,6 +582,7 @@ static void show_history(void)
 
 static void sync_cursor(void)
 {
+    sync_note_scroll();
     for (int r = 0; r < TODO_PAGE_SIZE; r++) {
         bool special_row = (r == special_row_history() || r == special_row_settings());
         if ((!special_row && global_of(r) < 0) || r != s_cursor) hide(s_cursor_bar[r]);

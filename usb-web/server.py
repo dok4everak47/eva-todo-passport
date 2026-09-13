@@ -574,7 +574,10 @@ $('imp-preview').onclick=async()=>{
   impBuf={mode,tasks:arr};
   impMsg(`文件 <b>${esc(f.name)}</b> · 模式 <b>${mode}</b> · ${arr.length} 条`+
    `（新增 ${add}${upd?` / 按 id 更新 ${upd}`:''}）→ 导入后 <b>${total}</b> 条`+
-   (total>12?' <span class="bad">超过上限 12,会被拒绝</span>':''));
+   (total>12?' <span class="bad">超过上限 12,会被拒绝</span>':'')+
+   (()=>{const ov=arr.filter(x=>x&&textPx(x.title||'','title')>176).length,
+     on=arr.filter(x=>x&&textPx(x.notes||x.desc||x.detail||'','notes')>176).length;
+     return (ov||on)?` <span class="bad">牌子上放不下:主标题超宽 ${ov} 条 / 副标题超宽 ${on} 条(会以 … 截断,全文可在详情页看)</span>`:''})());
   $('imp-go').style.display='';$('imp-go').disabled=(total>12);
   $('imp-go').textContent=`确认导入 ${arr.length} 条`;
  }catch(e){impBuf=null;$('imp-go').style.display='none';impMsg('JSON 有问题:'+esc(e.message),true)}
@@ -584,6 +587,7 @@ $('imp-go').onclick=async()=>{if(!impBuf)return;
  try{const j=await api('/api/import',{method:'POST',body:JSON.stringify(impBuf)});
   impMsg(`已导入:模式 ${j.mode} · 新增 ${j.added} · 更新 ${j.updated}`+
    (j.skipped?` · 跳过 ${j.skipped}(${(j.skipped_reasons||[]).join(';')})`:'')+
+   ((j.warnings&&j.warnings.length)?` <span class="bad">· 注意 ${j.warnings.join(';')}</span>`:'')+
    ` · 共 ${j.total} 条 · 镜像 ${esc(j.mirror||'-')}`);
   impBuf=null;$('imp-go').style.display='none';$('imp-file').value='';await poll();histLoad();
  }catch(e){impMsg(esc(e.message),true)}finally{$('imp-go').disabled=false}
@@ -663,14 +667,20 @@ class Handler(BaseHTTPRequestHandler):
         result = list(cur) if mode == "merge" else []
         added = updated = skipped = 0
         reasons = []
+        warnings = []          # 超长被截断等提示(不阻断导入)
         for k, item in enumerate(raw):
             if not isinstance(item, dict):
                 skipped += 1; reasons.append(f"第{k + 1}项不是对象"); continue
-            title = self._clean(item.get("title") or item.get("name") or item.get("text"), TITLE_MAX)
+            raw_title = item.get("title") or item.get("name") or item.get("text")
+            title = self._clean(raw_title, TITLE_MAX)
             if not title:
                 skipped += 1; reasons.append(f"第{k + 1}项缺标题"); continue
-            notes = self._clean(item.get("notes") or item.get("desc")
-                                or item.get("description") or item.get("detail"), NOTES_MAX)
+            raw_notes = (item.get("notes") or item.get("desc")
+                         or item.get("description") or item.get("detail"))
+            notes = self._clean(raw_notes, NOTES_MAX)
+            for _lb, _raw, _lim in (("主标题", raw_title, TITLE_MAX), ("副标题", raw_notes, NOTES_MAX)):
+                if _raw and len(str(_raw).encode("utf-8")) > _lim:
+                    warnings.append(f"第{k + 1}项{_lb}超过 {_lim} 字节,已截断")
             st = str(item.get("status") or item.get("state") or "todo").strip().lower()
             task = {
                 "id": str(item.get("id") or "").strip() or new_task_id(),
@@ -704,6 +714,7 @@ class Handler(BaseHTTPRequestHandler):
         self.mirror.sync(result)
         return self._json({"ok": True, "mode": mode, "added": added, "updated": updated,
                            "skipped": skipped, "skipped_reasons": reasons[:5],
+                           "warnings": warnings[:8],
                            "total": len(result), "mirror": self.mirror.status, "tasks": result})
 
     def _clean(self, s: str, limit: int) -> str:
